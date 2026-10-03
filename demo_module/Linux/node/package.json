@@ -1,0 +1,14 @@
+{
+  "name": "unified-base-electron-demo",
+  "version": "1.0.0",
+  "description": "A minimal animated Electron desktop demo for Unified Base.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "Unified Base",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^31.0.0"
+  }
+}

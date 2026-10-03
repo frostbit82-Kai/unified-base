@@ -1,0 +1,5 @@
+source 'https://rubygems.org'
+
+# Ruby's classic Tk GUI binding. Needs system Tcl/Tk headers/libs present
+# at install time (Ubuntu: sudo apt install tk). See README.md.
+gem 'tk'

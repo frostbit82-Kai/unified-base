@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Web (Vite) — Unified Base demo</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+        background: radial-gradient(1200px 800px at 50% -10%, #1b2540 0%, #0b0f1a 60%, #070a12 100%);
+        color: #e8ecf5;
+        overflow: hidden;
+      }
+      header {
+        position: fixed;
+        top: 0; left: 0; right: 0;
+        padding: 18px 22px;
+        display: flex;
+        align-items: baseline;
+        gap: 14px;
+        z-index: 2;
+        pointer-events: none;
+      }
+      header h1 {
+        margin: 0;
+        font-size: clamp(18px, 3.2vw, 30px);
+        font-weight: 700;
+        letter-spacing: -0.02em;
+        background: linear-gradient(90deg, #6ee7ff, #a78bfa 55%, #f0abfc);
+        -webkit-background-clip: text;
+        background-clip: text;
+        color: transparent;
+      }
+      header .hint {
+        font-size: 13px;
+        color: #8b97b3;
+        white-space: nowrap;
+      }
+      #fx {
+        position: fixed;
+        inset: 0;
+        display: block;
+        width: 100%;
+        height: 100%;
+        z-index: 1;
+      }
+      #stats {
+        position: fixed;
+        bottom: 16px;
+        left: 22px;
+        z-index: 2;
+        font-variant-numeric: tabular-nums;
+        font-size: 13px;
+        color: #9aa6c4;
+        pointer-events: none;
+      }
+      #stats b { color: #cfe3ff; font-weight: 600; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>Web (Vite) — Unified Base demo</h1>
+      <span class="hint">move your mouse · particles give chase</span>
+    </header>
+    <canvas id="fx"></canvas>
+    <div id="stats"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

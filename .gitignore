@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Build output. Every demo rebuilds its own on Start, for the OS it runs on —
+# a Linux-built node_modules/target/bin is wrong on Windows and vice versa.
+node_modules/
+target/
+bin/
+obj/
+build/
+dist/
+.ub-win-x64/
+
+# Runtime state a demo writes for itself (the PHP request counter).
+.state/
+
+# Blank tabs (File ▸ New Blank Tab) are the user's own projects, not the app's.
+apps/
+
+# OS litter (Explorer writes these onto removable drives)
+Thumbs.db
+desktop.ini
+.DS_Store
