@@ -5,6 +5,7 @@ Run:  python3 test_core.py   (inside the .venv — needs PyQt6 importable)
 No framework — plain asserts. Fails loudly if core logic breaks.
 """
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -1150,6 +1151,21 @@ def check_wsl_wrap():
     assert args[args.index("-lc") + 1] == 'ls | wc -l "$@"', args
 
 
+def check_wsl_ready():
+    """wsl.exe on PATH isn't WSL: Windows 11 ships it as an installer stub.
+    Ready must agree with whether `wsl --list` names a distro."""
+    if not ON_WINDOWS:
+        assert main.wsl_ready() is False
+        return
+    if not shutil.which("wsl.exe"):
+        assert not main.wsl_ready()
+        return
+    r = subprocess.run(["wsl.exe", "--list", "--quiet"], capture_output=True,
+                       timeout=60)
+    listed = r.returncode == 0 and bool(r.stdout.replace(b"\0", b"").strip())
+    assert main.wsl_ready() == listed, (r.returncode, r.stdout, r.stderr)
+
+
 def check_wine_wrap():
     with tempfile.TemporaryDirectory() as d:
         pre = Path(d) / "prefix"
@@ -1556,7 +1572,7 @@ if __name__ == "__main__":
                check_proc_table, check_children_walk, check_sampler,
                check_meter_widget, check_log_modes, check_meter_toggles,
                check_bridge_selection, check_wsl_paths, check_wsl_wrap,
-               check_wine_wrap, check_detect_platform, check_start_qprocess,
+               check_wsl_ready, check_wine_wrap, check_detect_platform, check_start_qprocess,
                check_module_wrap, check_wsl_pid_capture,
                check_python_under_wsl, check_program_files,
                check_toolchain_preflight, check_proc_text,

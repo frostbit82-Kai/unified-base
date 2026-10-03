@@ -529,6 +529,12 @@ def wine_program() -> str | None:
     return shutil.which("wine") or shutil.which("wine64")
 
 
+def wsl_ready() -> bool:
+    """Can Linux modules run through WSL here? Only on Windows — winplat's
+    version, bound below, checks for a real distro, not just wsl.exe."""
+    return False
+
+
 def wine_prefix() -> Path:
     """The Wine prefix modules share. A module can point WINEPREFIX elsewhere
     from its Environment variables, which override this."""
@@ -2771,6 +2777,7 @@ if IS_WINDOWS:
         winplat.embed_diagnostics, winplat.find_browser,
         winplat.tree_from_children)
     _proc_table = winplat.proc_table
+    wsl_ready = winplat.wsl_ready
     EmbedHost = winplat.Win32EmbedHost
     TerminalHost = winplat.ConsoleTerminal
 
@@ -3696,9 +3703,10 @@ class ModuleTab(QWidget):
             return ("This is a Windows module; on Linux it runs through Wine, "
                     "which isn't installed." +
                     (f"\n    Install it with:  {hint}" if hint else ""))
-        if b == "wsl" and not shutil.which("wsl.exe"):
+        if b == "wsl" and not wsl_ready():
             return ("This is a Linux module; on Windows it runs inside WSL, "
-                    "which isn't enabled. In an administrator PowerShell run:"
+                    "which isn't set up (no Linux distro installed). In an "
+                    "administrator PowerShell run:"
                     "\n    wsl --install\nthen restart and Start again.")
         if b == "wine" and self.cfg.runtime == "python":
             return ("A Windows-only Python module can't run under Wine — Wine "
@@ -5936,7 +5944,7 @@ def selftest() -> int:
     row("full terminal", TERMINAL_OK)
     if IS_WINDOWS:
         row("winget (Install button)", bool(shutil.which("winget")))
-        if shutil.which("wsl.exe"):
+        if wsl_ready():
             code, out = run(["wsl.exe", "--exec", "echo", "ub-wsl-ok"], 60)
             row("WSL runs commands", "ub-wsl-ok" in out, out[-60:])
             code, out = run(["wsl.exe", "--exec", "sh", "-c",
@@ -5948,7 +5956,7 @@ def selftest() -> int:
             row("toolchains inside WSL", None, " ".join(out.split()) or "none")
         else:
             row("WSL (Linux modules)", False,
-                "not enabled — admin PowerShell: wsl --install")
+                "not set up — admin PowerShell: wsl --install, then restart")
     else:
         w = wine_program()
         if w:

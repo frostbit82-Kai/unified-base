@@ -244,9 +244,36 @@ def new_windows_since(baseline: set[int], own_pid: int, max_depth: int = 6,
     return [h for h, _ in sorted(cands, key=lambda t: -t[1])]
 
 
+LXSS_KEY = r"Software\Microsoft\Windows\CurrentVersion\Lxss"
+
+
+def wsl_ready() -> bool:
+    """WSL is installed *and* has a distro to run Linux modules in.
+
+    wsl.exe on PATH proves nothing: Windows 11 ships it in System32 as a stub
+    that only prints "not installed" (in UTF-16, on stderr). Every registered
+    distro has a key under Lxss with its name, read here without starting the
+    WSL VM."""
+    import winreg
+    if not shutil.which("wsl.exe"):
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, LXSS_KEY) as k:
+            for i in range(winreg.QueryInfoKey(k)[0]):
+                with winreg.OpenKey(k, winreg.EnumKey(k, i)) as d:
+                    try:
+                        if winreg.QueryValueEx(d, "DistributionName")[0]:
+                            return True
+                    except OSError:
+                        continue
+    except OSError:
+        pass
+    return False
+
+
 def embed_diagnostics() -> str:
     return (f"window lookup: user32 OK, psutil {psutil.__version__}, "
-            f"wsl.exe {'OK' if shutil.which('wsl.exe') else 'missing'}")
+            f"WSL {'ready' if wsl_ready() else 'not set up'}")
 
 
 # --- processes -----------------------------------------------------------------------
