@@ -1306,6 +1306,27 @@ def check_npm_setup():
         os.utime(pkg, (3000, 3000))          # a git pull bumped a dependency
         assert names() == ["npm install", "Electron download"], names()
 
+    # A node_modules the other OS installed (the folder run through WSL, a
+    # flipped "Runs on"): npm calls it current, its .bin shims and native
+    # packages are the wrong OS's. npm on Windows writes .cmd shims, never
+    # elsewhere — the other OS's copy is cleared, then installed afresh.
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d)
+        (p / "package.json").write_text("{}")
+        os.utime(p / "package.json", (1000, 1000))
+        b = p / "node_modules" / ".bin"
+        b.mkdir(parents=True)
+        (b / "vite").write_text("")
+        (p / "node_modules" / ".package-lock.json").write_text("{}")
+        for windows, want in ((True, ["clearing node_modules installed by "
+                                      "Linux", "npm install"]), (False, [])):
+            got = [s[0] for s in main.npm_setup(p, windows)]
+            assert got == want, (windows, got)
+        (b / "vite.cmd").write_text("")
+        assert main.npm_setup(p, True) == []
+        assert [s[0] for s in main.npm_setup(p, False)][0] == \
+            "clearing node_modules installed by Windows"
+
 
 def check_php_setup():
     """composer install only when composer.json asks for something: every

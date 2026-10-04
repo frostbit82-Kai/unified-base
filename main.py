@@ -1129,11 +1129,18 @@ class PythonRuntime(Runtime):
     # setup/launch handled by ModuleTab's bespoke Python path.
 
 
-def npm_setup(proj: Path) -> list:
+def npm_setup(proj: Path, windows: bool = IS_WINDOWS) -> list:
     """`npm install` until it has succeeded since package.json or its lock
     last changed. npm writes its hidden lockfile last: a failed install
     leaves a node_modules behind that must not count, and a pulled
     dependency bump (git rewrites the manifests) must reach node_modules.
+
+    `windows`: the OS the install runs on (builds_on_windows). A
+    node_modules another OS installed — the same folder run through WSL, a
+    flipped "Runs on", a copied project — has the wrong .bin shims and
+    native packages (esbuild, rollup), and npm calls it up to date. npm on
+    Windows always writes .cmd shims into .bin, elsewhere never: that
+    tells them apart, and the other OS's copy is cleared first.
 
     Electron's ~100 MB binary comes from its own install.js: a postinstall
     up to Electron 41 (npm 11.19 blocks dependency scripts), the first start
@@ -1141,9 +1148,19 @@ def npm_setup(proj: Path) -> list:
     and untimed; path.txt is the last thing install.js writes, and after a
     fresh npm install it runs regardless (it returns at once if current)."""
     steps = []
-    hidden = proj / "node_modules" / ".package-lock.json"
+    nm = proj / "node_modules"
+    bins = list((nm / ".bin").iterdir()) if (nm / ".bin").is_dir() else []
+    foreign = bool(bins) and any(b.suffix == ".cmd" for b in bins) != windows
+    if foreign:
+        prog, args = ((sys.executable, ["-c", "import shutil; "
+                                        "shutil.rmtree('node_modules')"])
+                      if windows else ("rm", ["-rf", "node_modules"]))
+        steps.append((f"clearing node_modules installed by "
+                      f"{'Linux' if windows else 'Windows'}", prog, args,
+                      str(proj)))
+    hidden = nm / ".package-lock.json"
     done_at = hidden.stat().st_mtime if hidden.is_file() else None
-    if done_at is None or any(
+    if foreign or done_at is None or any(
             m.is_file() and m.stat().st_mtime > done_at
             for m in (proj / "package.json", proj / "package-lock.json")):
         steps.append(("npm install", "npm", ["install"], str(proj)))
@@ -1180,7 +1197,7 @@ class NodeRuntime(Runtime):
 
     @classmethod
     def setup_steps(cls, cfg):
-        return npm_setup(Path(cfg.project_dir))
+        return npm_setup(Path(cfg.project_dir), builds_on_windows(cfg))
 
     @classmethod
     def launch(cls, cfg):
@@ -1421,7 +1438,7 @@ class WebRuntime(Runtime):
 
     @classmethod
     def setup_steps(cls, cfg):
-        return npm_setup(Path(cfg.project_dir))
+        return npm_setup(Path(cfg.project_dir), builds_on_windows(cfg))
 
     @classmethod
     def launch(cls, cfg):
@@ -6652,9 +6669,13 @@ def selftest() -> int:
             code, out = run(["wsl.exe", "--exec", "sh", "-c",
                              "echo DISPLAY=$DISPLAY WAYLAND=$WAYLAND_DISPLAY"])
             row("WSLg (Linux GUI apps)", "DISPLAY=:" in out, out)
-            code, out = run(["wsl.exe", "--exec", "sh", "-c",
-                             "command -v python3 node cargo java dotnet | "
-                             "xargs -n1 basename"])
+            # One name per `command -v`: dash's checks only its first, so this
+            # said "python3" whatever else was there. Linux PATH only, login
+            # shell — as the modules see it.
+            code, out = run(["wsl.exe", "--exec", "bash", "-lc",
+                             WSL_LINUX_PATH + "for t in python3 node java "
+                             "dotnet cargo ruby php docker; do command -v $t "
+                             ">/dev/null && echo $t; done"])
             row("toolchains inside WSL", None, " ".join(out.split()) or "none")
             row("Linux windows embed", None,
                 f"yes, X server on {wsl_x_display()}" if wsl_x_display()

@@ -182,6 +182,12 @@ x11-native embed; docker, docker-multistage print); the rest now say which
   only trace on Windows, whose console is hidden) and keeps running.
 - Docker modules never search for a window ("running (output in log)").
 - PHP: no `composer install` for a composer.json that requires nothing.
+- A node_modules another OS installed (the same folder run through WSL, a
+  flipped "Runs on") is cleared and reinstalled: npm called it current,
+  but its .bin had no .cmd shims and esbuild was linux-x64. npm writes
+  .cmd shims on Windows only — `npm_setup` tells them apart by that.
+- `--selftest`'s WSL toolchain line listed only python3 (dash's
+  `command -v` checks just its first name).
 
 ## Traps (each cost real time)
 
