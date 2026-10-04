@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Web · Edge on Windows — Unified Base Windows demo</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <header>
+    <h1>Web · Edge on Windows</h1>
+    <p class="sub">Web platform features that reach into Windows itself — GPU,
+      voices, the screen, the share sheet, controllers, contrast themes</p>
+  </header>
+
+  <main class="grid">
+    <section class="card">
+      <h2>Platform</h2>
+      <dl id="platform"><dt>…</dt><dd></dd></dl>
+      <p class="note">User-Agent Client Hints: the UA string froze at
+        "Windows NT 10.0", so Windows 11 is told apart by
+        <code>platformVersion</code> ≥ 13.</p>
+    </section>
+
+    <section class="card">
+      <h2>Theme &amp; accessibility — live</h2>
+      <ul id="media" class="checks"></ul>
+      <p class="note">Flip Settings ▸ Personalization ▸ Colors, a contrast
+        theme, or Accessibility ▸ Visual effects ▸ Animation effects — this
+        list and this page's colours follow at once.</p>
+    </section>
+
+    <section class="card wide">
+      <h2>WebGPU — Game of Life in a compute shader</h2>
+      <canvas id="life" width="512" height="512"></canvas>
+      <div class="row">
+        <button id="life-random" class="primary">Randomize</button>
+        <button id="life-gun">Glider gun</button>
+        <button id="life-pause">Pause</button>
+        <label>speed <input id="life-speed" type="range" min="1" max="8" value="4"></label>
+      </div>
+      <p class="mono" id="life-stat">starting…</p>
+    </section>
+
+    <section class="card">
+      <h2>Windows voices</h2>
+      <select id="voice"></select>
+      <p class="say" id="say" contenteditable="true" spellcheck="false">Hello from
+        the web platform. These voices come from Windows itself, and every
+        word lights up as it is spoken.</p>
+      <div class="row">
+        <button id="speak" class="primary">Speak</button>
+        <button id="hush">Stop</button>
+        <label>rate <input id="rate" type="range" min="0.5" max="2" step="0.1" value="1"></label>
+      </div>
+      <p class="note" id="voice-note"></p>
+    </section>
+
+    <section class="card">
+      <h2>Eye dropper — the whole screen</h2>
+      <div class="row">
+        <button id="pick" class="primary">Pick a colour…</button>
+        <span class="swatch" id="swatch"></span>
+        <span class="mono" id="picked">nothing yet</span>
+      </div>
+      <ul id="history" class="history"></ul>
+      <p class="note">Not just this page: any pixel on any monitor, other
+        apps and the taskbar included. Esc cancels.</p>
+    </section>
+
+    <section class="card">
+      <h2>Share sheet</h2>
+      <div class="row">
+        <button id="share" class="primary">Share this page…</button>
+      </div>
+      <p class="note" id="share-note">Opens Windows' own Share dialog —
+        Nearby Sharing, Mail, Phone Link, whatever this machine offers.</p>
+    </section>
+
+    <section class="card">
+      <h2>Game controllers</h2>
+      <div id="pads"><p class="note">Connect an Xbox (XInput) controller and
+        press a button — browsers only report pads after a press.</p></div>
+    </section>
+
+    <section class="card">
+      <h2>Battery</h2>
+      <dl id="battery"><dt>…</dt><dd></dd></dl>
+    </section>
+
+    <section class="card">
+      <h2>A folder, read-only</h2>
+      <div class="row"><button id="folder" class="primary">Choose a folder…</button></div>
+      <dl id="folder-stat"><dt>nothing chosen</dt><dd></dd></dl>
+      <ol id="folder-top" class="mono top"></ol>
+      <p class="note">File System Access API: the native Windows folder
+        picker, then a read-only walk — the page gets only what you chose.</p>
+    </section>
+  </main>
+
+  <footer class="mono" id="status">ready</footer>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>

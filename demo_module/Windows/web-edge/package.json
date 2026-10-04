@@ -1,0 +1,15 @@
+{
+  "name": "unified-base-web-edge",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Vite Windows demo for Unified Base — what Edge can do on Windows: WebGPU, Windows voices, EyeDropper, the share sheet, live contrast themes.",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

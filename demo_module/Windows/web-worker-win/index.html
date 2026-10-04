@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Web · workers &amp; the main thread — Unified Base Windows demo</title>
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+  <header>
+    <h1>Web · workers &amp; the main thread · Windows</h1>
+    <p class="sub">Web Worker · transferable ArrayBuffers · live SVG chart —
+      the same job, on and off the UI thread</p>
+  </header>
+
+  <section class="controls">
+    <button id="worker" class="primary">Run in worker</button>
+    <button id="main">Run on main thread</button>
+    <label>work
+      <input id="size" type="range" min="1" max="12" value="6">
+      <span id="sizelabel"></span>
+    </label>
+    <span id="verdict" class="verdict"></span>
+  </section>
+
+  <section class="panel">
+    <h2>Frame time — the UI thread's own heartbeat</h2>
+    <svg id="chart" viewBox="0 0 600 150" preserveAspectRatio="none"></svg>
+    <div class="legend">
+      <span><i class="dot ok"></i> smooth (≤20 ms)</span>
+      <span><i class="dot warn"></i> janky</span>
+      <span><i class="dot bad"></i> frozen (≥100 ms)</span>
+      <span id="fps" class="mono"></span>
+    </div>
+  </section>
+
+  <section class="cards">
+    <div class="card">
+      <h2>Spinner</h2>
+      <div class="spinner"><i id="spin"></i></div>
+      <p class="mono" id="spinstat">rAF-driven — stalls only when the UI thread does</p>
+    </div>
+    <div class="card">
+      <h2>Last run</h2>
+      <dl id="result"><dt>nothing yet</dt><dd></dd></dl>
+    </div>
+  </section>
+
+  <footer class="mono" id="status">ready</footer>
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
