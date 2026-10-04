@@ -4251,6 +4251,7 @@ class ModuleTab(QWidget):
             self.embed_timer.stop()
             return
         if self._embed_attempts == 1:
+            self.embed_timer.setInterval(250)       # after a slow watch
             self._log(embed_diagnostics())
         pids = descendant_pids(int(proc.processId())) | self._wine_family()
         # A WSLg window belongs to msrdc.exe, never to anything we started, so
@@ -4264,7 +4265,9 @@ class ModuleTab(QWidget):
         # give the pid path a long head start (~10 s): XRes now attributes
         # even tk/SDL/winit windows, and a module that is still building
         # would otherwise steal whichever neighbour opened a window first.
-        if not wids and (wsl or self._embed_attempts >= 40):
+        # Only while still searching: after that a new window is anyone's.
+        guessing = self._embed_attempts <= self._max_embed_attempts
+        if not wids and guessing and (wsl or self._embed_attempts >= 40):
             wids = [w for w in new_windows_since(
                         self._win_baseline, self._own_pid,
                         owners=LINUX_WINDOW_OWNERS if wsl else None)
@@ -4275,12 +4278,21 @@ class ModuleTab(QWidget):
         if wids:
             self.embed_timer.stop()
             self._embed(wids[0])
-        elif self._embed_attempts >= self._max_embed_attempts:  # ~40 s
-            self.embed_timer.stop()
-            self._log(f"No embeddable window found after 40 s "
-                      f"(searched {len(pids)} process(es)) — panel mode. "
-                      "Use the Embed button to retry once the window is up.")
+        elif self._embed_attempts == self._max_embed_attempts:  # ~40 s
             self._set_status("running (own window)")
+            if wsl:        # its windows are never its own processes'
+                self.embed_timer.stop()
+                self._log(f"No embeddable window found after 40 s — panel "
+                          "mode. Use the Embed button to retry once the "
+                          "window is up.")
+                return
+            # A slow build (dotnet run compiling first) can outlast 40 s: keep
+            # watching the module's own processes, slowly, and embed the
+            # window when it turns up.
+            self.embed_timer.setInterval(2000)
+            self._log(f"No embeddable window found after 40 s (searched "
+                      f"{len(pids)} process(es)) — still watching; it is "
+                      "embedded when it appears (or use the Embed button).")
 
     def _embed(self, wid: int):
         _CLAIMED_WINDOWS.add(wid)
@@ -5310,6 +5322,8 @@ class UnifiedBase(QMainWindow):
             # re-highlights right after (filters run before handlers), and
             # anything else drops the outline.
             w = obj if isinstance(obj, QWidget) else None
+            if IS_WINDOWS and w is not None and not isinstance(w, EmbedHost):
+                winplat.take_keyboard(int(self.winId()))
             pane = self._pane_of(w)
             if pane is not None:
                 self._activate_pane(pane)

@@ -1177,6 +1177,48 @@ def check_wsl_mount_args():
     assert main.wsl_mount_args(r"\\wsl$\Ubuntu\home\me") is None
 
 
+def check_late_window_embeds():
+    """A window that turns up after 40 s (dotnet run compiling first) is still
+    embedded — from the module's own processes only, never a stranger's."""
+    _app()
+    from PyQt6.QtCore import QProcess
+
+    class Proc:
+        def state(self):
+            return QProcess.ProcessState.Running
+
+        def processId(self):
+            return 4242
+    cfg = main.ModuleConfig(name="slow", project_dir="/p", entry="")
+    tab = main.ModuleTab(cfg)
+    tab.embed_proc, tab._win_baseline = Proc(), set()
+    own, strangers, embedded = [], [], []
+    keep = (main.windows_for_pids, main.new_windows_since, main.descendant_pids,
+            main.embed_diagnostics)
+    main.windows_for_pids = lambda pids: list(own)
+    main.new_windows_since = lambda *a, **k: list(strangers)
+    main.descendant_pids = lambda pid: {pid}
+    main.embed_diagnostics = lambda: ""
+    tab._embed = embedded.append
+    try:
+        tab._embed_attempts = tab._max_embed_attempts - 1
+        tab.embed_timer.start()
+        tab._try_embed()                                 # the 40 s mark
+        assert tab.embed_timer.isActive() and \
+            tab.embed_timer.interval() == 2000, "stopped watching"
+        strangers.append(0xBAD)              # someone else's window, later
+        tab._try_embed()
+        assert embedded == [], "grabbed a stranger's window after 40 s"
+        own.append(0x77)
+        tab._try_embed()
+        assert embedded == [0x77], embedded
+    finally:
+        (main.windows_for_pids, main.new_windows_since, main.descendant_pids,
+         main.embed_diagnostics) = keep
+        tab.embed_timer.stop()
+        tab.shutdown()
+
+
 def check_wsl_display_env():
     """With a Windows X server, a Linux module's launch draws there (its
     windows embed); without one it stays on WSLg, untouched."""
@@ -1686,7 +1728,8 @@ if __name__ == "__main__":
                check_proc_table, check_children_walk, check_sampler,
                check_meter_widget, check_log_modes, check_meter_toggles,
                check_bridge_selection, check_wsl_paths, check_wsl_wrap,
-               check_wsl_ready, check_wsl_mount_args, check_wsl_display_env,
+               check_wsl_ready, check_wsl_mount_args, check_late_window_embeds,
+               check_wsl_display_env,
                check_frame_restrip, check_embed_refused,
                check_kill_pid_exited,
                check_wine_wrap, check_detect_platform, check_start_qprocess,

@@ -532,6 +532,20 @@ def find_browser() -> str | None:
     return None
 
 
+def take_keyboard(top: int) -> None:
+    """Give the launcher's window the keyboard back on a click of its own.
+
+    After typing into an embedded app, Win32 focus stays in that app's
+    window: our window is still the active one, so Qt never asks for it
+    back, and shortcuts and the command bar's keys went to the app."""
+    info = GUITHREADINFO()
+    info.cbSize = ctypes.sizeof(GUITHREADINFO)
+    if GetGUIThreadInfo(0, ctypes.byref(info)):        # foreground thread
+        f = _h(info.hwndFocus)
+        if f and window_pid(f) != os.getpid():
+            SetFocus(top)
+
+
 # --- embedding -----------------------------------------------------------------------
 class Win32EmbedHost(QWidget):
     """Hosts another process's top-level window as a child of this widget.
