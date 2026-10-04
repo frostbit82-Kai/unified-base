@@ -188,6 +188,10 @@ x11-native embed; docker, docker-multistage print); the rest now say which
   .cmd shims on Windows only — `npm_setup` tells them apart by that.
 - `--selftest`'s WSL toolchain line listed only python3 (dash's
   `command -v` checks just its first name).
+- Install buttons: `Composer.Composer` and `Gradle.Gradle` don't exist in
+  winget (nor does Maven) — those now name their download page
+  (`WINDOWS_DOWNLOADS`); `make` and `cmake` got winget IDs. Every winget ID
+  in `TOOLCHAIN_PKGS` was checked with `winget show` on 2026-10-04.
 
 ## Traps (each cost real time)
 

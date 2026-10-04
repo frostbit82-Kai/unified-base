@@ -323,6 +323,19 @@ def check_missing_setup_msg():
         assert cmd in main.TOOLCHAIN_PKGS, cmd
     hint = main.toolchain_install_cmd("bundle")
     assert hint is None or "bundler" in hint or "ruby" in hint, hint
+    # Windows tools winget doesn't carry get a download page, never a dead
+    # `winget install` (Composer.Composer / Gradle.Gradle don't exist).
+    real = main.IS_WINDOWS, main._pkg_manager, main.which_fresh
+    main.IS_WINDOWS, main._pkg_manager = True, lambda: "winget"
+    main.which_fresh = lambda cmd: None
+    try:
+        for cmd, url in main.WINDOWS_DOWNLOADS.items():
+            assert main.toolchain_install_cmd(cmd) is None, cmd
+            assert url in main.missing_setup_msg(cmd), cmd
+        assert main.toolchain_install_cmd("make") == \
+            "winget install -e --id ezwinports.make"
+    finally:
+        main.IS_WINDOWS, main._pkg_manager, main.which_fresh = real
 
 
 def check_runtime_launch_specs():

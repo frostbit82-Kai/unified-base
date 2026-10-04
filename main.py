@@ -1019,12 +1019,16 @@ TOOLCHAIN_PKGS = {
     # default (MSVC) needs Visual Studio's linker, a multi-GB install.
     "cargo":  {"apt": "cargo", "dnf": "cargo", "pacman": "rust",
                "zypper": "cargo", "brew": "rust", "winget": "Rustlang.Rust.GNU"},
+    # No winget package exists for composer, gradle or mvn (the IDs once
+    # here made a dead Install button): WINDOWS_DOWNLOADS points at them.
     "composer": {"apt": "composer", "dnf": "composer", "pacman": "composer",
-                 "zypper": "php-composer2", "brew": "composer",
-                 "winget": "Composer.Composer"},
+                 "zypper": "php-composer2", "brew": "composer"},
     "gradle": {"apt": "gradle", "dnf": "gradle", "pacman": "gradle",
-               "zypper": "gradle", "brew": "gradle",
-               "winget": "Gradle.Gradle"},
+               "zypper": "gradle", "brew": "gradle"},
+    "make":   {"apt": "make", "dnf": "make", "pacman": "make",
+               "zypper": "make", "brew": "make", "winget": "ezwinports.make"},
+    "cmake":  {"apt": "cmake", "dnf": "cmake", "pacman": "cmake",
+               "zypper": "cmake", "brew": "cmake", "winget": "Kitware.CMake"},
     "go":     {"apt": "golang-go", "dnf": "golang", "pacman": "go",
                "zypper": "go", "brew": "go", "winget": "GoLang.Go"},
     "wine":   {"apt": "wine wine64", "dnf": "wine", "pacman": "wine",
@@ -1033,6 +1037,20 @@ TOOLCHAIN_PKGS = {
                        "pacman": "docker-compose", "zypper": "docker-compose",
                        "brew": "docker-compose"},
 }
+
+# Windows tools winget doesn't carry: where to get them instead.
+WINDOWS_DOWNLOADS = {"composer": "https://getcomposer.org/download/",
+                     "gradle": "https://gradle.org/install/",
+                     "mvn": "https://maven.apache.org/download.cgi"}
+
+
+def _manual_hint(cmd: str) -> str:
+    """The no-package-manager fallback: a download page on Windows (it has
+    no system package manager to name), else the generic advice."""
+    url = WINDOWS_DOWNLOADS.get(cmd) if IS_WINDOWS else None
+    return (f"Get '{cmd}' from {url} (winget has no package for it)" if url
+            else f"Install '{cmd}' via your system package manager")
+
 
 def _pkg_manager() -> str | None:
     if IS_WINDOWS:
@@ -1093,7 +1111,7 @@ def missing_toolchain_msg(runtime_id: str) -> str | None:
     hint = toolchain_install_cmd(cmd)
     base = f"{runtime_id!r} runtime needs '{cmd}', which isn't on PATH."
     return (f"{base}\n    Install it with:  {hint}" if hint else
-            f"{base} Install '{cmd}' via your system package manager, then Start again.")
+            f"{base} {_manual_hint(cmd)}, then Start again.")
 
 
 def missing_setup_msg(cmd: str) -> str | None:
@@ -1109,7 +1127,10 @@ def missing_setup_msg(cmd: str) -> str | None:
     base = (f"Setup step needs '{cmd}', which isn't on PATH. Skipping it and "
             "starting anyway — the module's dependencies may already be "
             "installed.")
-    return f"{base}\n    To run that step next time:  {hint}" if hint else base
+    if hint:
+        return f"{base}\n    To run that step next time:  {hint}"
+    return f"{base}\n    {_manual_hint(cmd)}." if cmd in WINDOWS_DOWNLOADS \
+        and IS_WINDOWS else base
 
 
 class PythonRuntime(Runtime):
