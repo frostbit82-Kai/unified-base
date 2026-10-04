@@ -3046,6 +3046,33 @@ def compose_args(program: str, args: list, startup_args: list) -> list:
     return out + extra
 
 
+def docker_hint(text: str) -> str | None:
+    """A failed docker build, said plainly. Docker Desktop needn't start at
+    sign-in, and it runs Linux *or* Windows containers, never both: an image
+    of the other kind fails talking about manifests, or (BuildKit pulling a
+    Windows image anyway) a missing ContainerUser."""
+    if re.search(r"failed to connect to the docker API|"
+                 r"Cannot connect to the Docker daemon", text):
+        return ("Docker's engine isn't running. Start Docker Desktop (Linux: "
+                "sudo systemctl start docker), wait until it's up, then Restart.")
+    if re.search(r"permission denied while trying to connect to the docker",
+                 text, re.I):
+        return ("Docker refused the connection: your account isn't in its "
+                "group (Linux: sudo usermod -aG docker $USER; Windows: "
+                "docker-users). Sign out and back in, then Restart.")
+    if "unable to find user ContainerUser" in text or \
+            "no matching manifest for linux" in text:
+        return ("This is a Windows image and Docker is running Linux "
+                "containers: Docker Desktop's tray icon ▸ Switch to Windows "
+                "containers…, then Restart.")
+    if "no matching manifest for windows" in text or \
+            'image operating system "linux" cannot be used' in text:
+        return ("This is a Linux image and Docker is running Windows "
+                "containers: Docker Desktop's tray icon ▸ Switch to Linux "
+                "containers…, then Restart.")
+    return None
+
+
 def chrome_sandbox_hint(text: str) -> str | None:
     """Turn Chromium's cryptic SUID-sandbox abort into instructions.
 
@@ -4148,8 +4175,13 @@ class ModuleTab(QWidget):
             for k, v in run_env.items():
                 qenv.insert(k, str(v))
             p.setProcessEnvironment(qenv)
-        p.readyReadStandardOutput.connect(
-            lambda: self._log(proc_text(p.readAllStandardOutput())))
+        tail = [""]
+
+        def out():
+            text = proc_text(p.readAllStandardOutput())
+            tail[0] = (tail[0] + text)[-4000:]
+            self._log(text)
+        p.readyReadStandardOutput.connect(out)
 
         def done(code, _status):
             self.setup_proc = None
@@ -4157,6 +4189,9 @@ class ModuleTab(QWidget):
                 on_ok()
             else:
                 self._log(f"Setup step failed with exit code {code}.")
+                hint = docker_hint(tail[0])
+                if hint:
+                    self._log(hint)
                 logger.warning(f"Setup failed: {prog} exited with code {code}")
                 self._set_status("setup failed")
 

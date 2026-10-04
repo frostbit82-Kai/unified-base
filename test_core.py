@@ -149,6 +149,23 @@ def check_compose_args():
     assert main.compose_args("java", ["-jar", "x.jar"], None) == ["-jar", "x.jar"]
 
 
+def check_docker_hint():
+    """Docker's failures (verbatim, Docker 29 on Windows) get a plain fix."""
+    down = ("ERROR: failed to connect to the docker API at npipe:////./pipe/"
+            "dockerDesktopLinuxEngine; check if the path is correct and if the "
+            "daemon is running: open //./pipe/dockerDesktopLinuxEngine: The "
+            "system cannot find the file specified.")
+    assert "Start Docker Desktop" in main.docker_hint(down)
+    win_on_linux = ("ERROR: process \"cmd /S /C dotnet publish\" did not complete "
+                    "successfully: unable to find user ContainerUser: no "
+                    "matching entries in passwd file")
+    assert "Switch to Windows containers" in main.docker_hint(win_on_linux)
+    linux_on_win = ("no matching manifest for windows(10.0.26300)/amd64 in the "
+                    "manifest list entries")
+    assert "Switch to Linux containers" in main.docker_hint(linux_on_win)
+    assert main.docker_hint("Step 1/7 : FROM alpine\nSuccessfully built") is None
+
+
 def check_chrome_sandbox_hint():
     # Exact abort text Chromium prints when unprivileged user namespaces are
     # blocked and chrome-sandbox isn't SUID root (Ubuntu apparmor default).
@@ -1830,7 +1847,8 @@ if __name__ == "__main__":
                check_config_compat, check_portable_paths,
                check_moved_demo_paths,
                check_frame_window_ranking, check_compose_args,
-               check_chrome_sandbox_hint, check_kill_process_tree,
+               check_chrome_sandbox_hint, check_docker_hint,
+               check_kill_process_tree,
                check_pids_with_arg, check_missing_setup_msg,
                check_border_colors,
                check_visible_pane_count,

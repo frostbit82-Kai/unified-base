@@ -69,7 +69,7 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Real Windows: 58 pass, 9 skipped
+- `python test_core.py` (inside `.venv`). Real Windows: 59 pass, 9 skipped
   (Linux-host only). Under Wine `check_proc_table` and `check_sampler` fail
   only because Wine reports no CPU time / parent for other processes.
 - Linux GUI tests run on a nested Xvfb display, never the user's desktop;
@@ -119,8 +119,10 @@ host, no Visual Studio), Temurin 25 + Maven (user zips), Ruby 3.4, PHP 8.4
 zig + make, Docker Engine *inside WSL*, and Docker Desktop (installed
 without `--accept-license`/`--no-windows-containers`, winget's defaults;
 its Ubuntu integration is off, so WSL keeps its own engine).
-`docker-multistage-win` runs on either; `docker-windows` waits for the
-Containers feature. Both Linux Electron demos are on ^44 and run through
+`docker-multistage-win` runs on either; `docker-windows` runs on Docker
+Desktop's Windows engine (Containers feature on, Hyper-V isolation; ~150 s
+first build incl. the Nano Server pulls). A failed build names the fix
+(`docker_hint`: engine stopped, wrong container mode, docker group). Both Linux Electron demos are on ^44 and run through
 WSL (Ubuntu 26.04's `nodejs` is 22.22; Electron 40+ needs ≥ 22.12).
 
 ## Traps (each cost real time)
