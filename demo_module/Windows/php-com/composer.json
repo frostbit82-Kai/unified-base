@@ -1,0 +1,4 @@
+{
+    "name": "demo/php-com",
+    "description": "Unified Base PHP Windows demo #2 \u2014 Windows through COM (com_dotnet): WMI, FileSystemObject, WScript.Shell"
+}
