@@ -3448,15 +3448,11 @@ class ModuleTab(QWidget):
         self._btn_wanted[b] = on
         self._apply_compact(force=True)
 
-    def _apply_compact(self, force: bool = False):
-        """Fold the header down as the pane narrows: whole buttons, then
-        their glyphs alone (▶ ■ ↻ ⊞), then nothing but the ☰ menu.
-
-        Tiling drags a pane to PANE_MIN_W (160px) but the full header needs
-        ~640, so without this the buttons survive as unreadable 13px slivers.
-        Widths come from the buttons themselves: a fixed threshold fit one
-        style only, and Windows 11's 81px-minimum buttons were cut off.
-        """
+    def _header_widths(self):
+        """(full, short, wanted, glyphs): the pane width the whole header
+        needs, the width its glyph-only form needs, the buttons it shows and
+        their glyphs. Depends on style and font — Ubuntu Sans 11pt needs
+        ~790px, Windows 11's 81px-minimum buttons more."""
         wanted = [b for b in self._bar_buttons if self._btn_wanted.get(b, True)]
         glyphs = {b: g for b in wanted if (g := self._glyph(b))}
         gap = self.header.layout().spacing()
@@ -3469,6 +3465,18 @@ class ModuleTab(QWidget):
                           (*wanted, self.chk_logs, self.btn_logmode))
         short = base + self.btn_more.sizeHint().width() + \
             sum(self._glyph_width(b, g) + gap for b, g in glyphs.items())
+        return full, short, wanted, glyphs
+
+    def _apply_compact(self, force: bool = False):
+        """Fold the header down as the pane narrows: whole buttons, then
+        their glyphs alone (▶ ■ ↻ ⊞), then nothing but the ☰ menu.
+
+        Tiling drags a pane to PANE_MIN_W (160px) but the full header needs
+        ~640, so without this the buttons survive as unreadable 13px slivers.
+        Widths come from the buttons themselves: a fixed threshold fit one
+        style only, and Windows 11's 81px-minimum buttons were cut off.
+        """
+        full, short, wanted, glyphs = self._header_widths()
         w = self.width()
         tier = 0 if w >= full else 1 if w >= max(short, 300) else 2
         if tier == self._compact and not force:

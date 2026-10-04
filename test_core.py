@@ -663,13 +663,22 @@ def check_compact_header():
     from PyQt6.QtCore import QPoint, Qt
     app = _app()
     with tempfile.TemporaryDirectory() as d:
-        win = _row_window(app, d, 3, width=3000)   # room for 3 full rows
+        win = _row_window(app, d, 2)
         panes = win.module_tabs
+        # Room for two whole headers. How much that is depends on the style
+        # and font (and a window can't outgrow its screen), so it's measured.
+        full = panes[0]._header_widths()[0]
+        win.resize(2 * full + 120, win.height())
+        for _ in range(30):
+            app.processEvents()
+            if all(t.width() >= full for t in panes):
+                break
         # Nothing in the pane may set a minimum wider than a dragged pane, or
         # the drag below silently does nothing.
         assert panes[0].layout().minimumSize().width() <= main.PANE_MIN_W, \
             panes[0].layout().minimumSize().width()
-        assert all(t._compact == 0 for t in panes), [t._compact for t in panes]
+        assert all(t._compact == 0 for t in panes), \
+            ([t._compact for t in panes], [t.width() for t in panes], full)
 
         sp = win.row_splitter
         h = sp.handle(1)
@@ -685,7 +694,7 @@ def check_compact_header():
         for _ in range(6):
             app.processEvents()
 
-        narrow, wide = panes[0], panes[2]
+        narrow, wide = panes[0], panes[1]
         assert narrow.width() < 430, narrow.width()
         assert narrow._compact > 0, narrow._compact
         assert not narrow.btn_start.isVisible()
