@@ -1455,6 +1455,8 @@ def check_python_under_wsl():
             assert len(mount) == (1 if ON_WINDOWS else 0), mount
             script = args[args.index("-lc") + 1]
             assert prog == "wsl.exe" and "python3 -m venv" in script, script
+            # a half-made venv (no ensurepip) has bin/python but no bin/pip
+            assert "/bin/pip ||" in script and "--clear" in script, script
             assert "requests" in script and "-r " in script, script
             assert "$HOME/.unified_base/envs/" in script
             lprog, largs, lenv = seen["launch"]

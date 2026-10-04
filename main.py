@@ -3911,7 +3911,10 @@ class ModuleTab(QWidget):
         scanned = [d for d in scan_imports(proj) if d not in declared]
         pkgs += declared + scanned + \
             self.cfg.extra_env.get("EXTRA_PIP_PACKAGES", "").split()
-        script = f"test -x {venv}/bin/python || python3 -m venv {venv}"
+        # bin/pip, not bin/python: a venv that failed for want of ensurepip
+        # (no python3-venv in the distro) leaves bin/python behind, and was
+        # then taken as ready forever after the package was installed.
+        script = f"test -x {venv}/bin/pip || python3 -m venv --clear {venv}"
         if pkgs:
             self._log("Packages for WSL: " + " ".join(pkgs))
             script += (f" && {venv}/bin/python -m pip install "
