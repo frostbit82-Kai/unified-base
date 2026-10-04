@@ -25,8 +25,9 @@ way is how work gets stranded.
 
 **No build output in git.** Each demo rebuilds `node_modules`, `target`,
 `bin`/`obj` for the OS it runs on (see `.gitignore`). The prebuilt
-`Windows/win32-native/app.exe` and `Linux/x11-native/x11-native` are the
-deliberate exceptions.
+`Windows/win32-native/app.exe`, `Windows/c-paint/paint.exe`,
+`Windows/c-sysmon/sysmon.exe` and `Linux/x11-native/x11-native` are the
+deliberate exceptions: C needs a compiler most machines lack.
 
 **Installers come later (Linux and Windows).** Keep that possible: no
 personal paths in defaults, and nothing new that must write next to the code.
@@ -53,7 +54,13 @@ user's to run — hand them the command; never type a password.
   tested on Linux under `_as_windows()`; `@linux_host` checks (/proc, sh,
   Wine) are skipped on Windows.
 - `demo_module/Linux/*` (19 demos, one per runtime) and
-  `demo_module/Windows/{win32-native, winforms-dotnet}`.
+  `demo_module/Windows/*` (22): `win32-native`, `winforms-dotnet`, and two
+  per Linux language — a twin of the Linux demo #2 (`*-win`, same code
+  where the toolkit allows, for side-by-side comparison; the suffix because
+  a cross-platform module gets no OS badge) and one showing Windows itself
+  (`python-winapi`, `web-edge`, `node-windows`, `csharp-winrt`, `java-ffm`,
+  `rust-synth`, `c-paint` + `c-sysmon`, `ruby-com`, `php-com`,
+  `docker-windows`). Most have `--selftest`; each README says what differs.
 
 ## Run and test
 
@@ -62,7 +69,7 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Real Windows: 50 pass, 9 skipped
+- `python test_core.py` (inside `.venv`). Real Windows: 57 pass, 9 skipped
   (Linux-host only). Under Wine `check_proc_table` and `check_sampler` fail
   only because Wine reports no CPU time / parent for other processes.
 - Linux GUI tests run on a nested Xvfb display, never the user's desktop;
@@ -95,7 +102,6 @@ In WSL: `apt install python3-venv python3-tk` (Ubuntu ships neither).
 **Known limits on Windows:**
 - A portable Chromium needs its folder ACL'd for app containers (the log
   hint gives the icacls line); installed Chrome/Edge are fine.
-- Chrome/Edge `--app` windows draw their own caption strip inside the pane.
 - VcXsrv renders in software: ~1 core for a 60 fps full-window animation,
   embedded or not.
 
@@ -104,7 +110,43 @@ embedded type are per-monitor aware; each child fits its pane to the pixel,
 clicks land, VcXsrv's geometry matches. X11 apps don't scale their content.
 Nothing on the original Windows list is untested.
 
+2026-10-04: the header folds by real widths (full → glyph buttons → ☰);
+browser panes crop Chromium's own caption strip; `exit` folds the terminal
+away; toolchains installed outside the launcher are found (`which_fresh`);
+child output loses terminal escapes. Toolchains on this machine: Rust (GNU
+host, no Visual Studio), Temurin 25 + Maven (user zips), Ruby 3.4, PHP 8.4
+(winget, its `php.ini` made from `php.ini-development` + `com_dotnet`),
+zig + make, and Docker Engine *inside WSL* (no Docker Desktop yet:
+`docker-windows` is untested).
+
 ## Traps (each cost real time)
+
+- Edge signs the Windows account into every throwaway `--user-data-dir` and
+  says so in a modal dialog. The dialog's owner is the embedded window, so
+  it disabled the *launcher* — and came up minimized, nothing to click.
+  Web launches pass `--disable-sync --disable-features=msImplicitSignin`;
+  `winplat.free_owner` restores a minimized dialog of an embedded app and
+  re-enables a launcher whose dialog's process died.
+- Chromium `--app` windows draw caption + frame inside the client area;
+  the host hangs the window past its edges by the page's insets
+  (`Chrome_RenderWidgetHostHWND`). At 125% the bottom inset flips 7/8 with
+  every resize — `settle_crop` only grows on 1-2 px changes.
+- Win32 *child* windows can't have menus (the HMENU slot is the control
+  ID): an embedded app loses a Win32 menu bar. Electron's survives (it is
+  drawn in the client area). The C demos use buttons + accelerators.
+- A failed setup step stops the launch even when a prebuilt exe exists:
+  the C demos' recipes are prefixed `-` only while the exe exists.
+- npm 11.19 blocks dependency install scripts by default; Electron 31
+  downloads its binary in one, whose unzip also stops silently under
+  Node 26. Electron 44 has no install script (fetches on first run):
+  the Windows Electron demos use it; `Linux/node*` still pin ^31.
+- `windows-sys` ≥ 0.60 links via raw-dylib, which on the GNU toolchain needs
+  `dlltool` on PATH (Rust ships one, privately): `rust-synth` pins 0.59.
+- Fiddle runs a `bind` block with its own `self`; a Ruby exception must
+  not unwind into user32. ruby.exe has no Common Controls 6 manifest: the
+  Ruby demos activate one at run time (`CreateActCtxW`) before comctl32 loads.
+- Testing: PrintWindow on an embedded child needs the *parent's* thread
+  pumping — a harness that blocks on its capture subprocess deadlocks.
 
 - Qt 6.11 (current PyQt6) needs Windows 10 1809+ (system ICU); Wine lacks it,
   so Wine tests pin `PyQt6==6.9.1`.
