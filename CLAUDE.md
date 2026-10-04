@@ -99,7 +99,10 @@ In WSL: `apt install python3-venv python3-tk` (Ubuntu ships neither).
 - VcXsrv renders in software: ~1 core for a 60 fps full-window animation,
   embedded or not.
 
-**Still untested:** DPI scaling of embedded windows on a scaled monitor.
+DPI: verified at 125% (live switch and fresh start). The launcher and every
+embedded type are per-monitor aware; each child fits its pane to the pixel,
+clicks land, VcXsrv's geometry matches. X11 apps don't scale their content.
+Nothing on the original Windows list is untested.
 
 ## Traps (each cost real time)
 
@@ -136,7 +139,14 @@ In WSL: `apt install python3-venv python3-tk` (Ubuntu ships neither).
 - On Windows `os.kill` calls an already-exited process "access denied" while
   a handle is open; `kill_pid` there is psutil's.
 - Embedded children are never activated: a click must hand them focus
-  (`_focus_if_outside`), or conhost never gets a key.
+  (`_focus_if_outside`), or conhost never gets a key — and the reverse: a
+  click on our own widgets must take it back (`take_keyboard`), or every
+  shortcut goes to the embedded app.
+- An embed search that times out keeps watching the module's own pids
+  (slow builds: `dotnet run` compiles first); only the "new window since
+  launch" guess stops at 40 s.
+- Test scripts on a scaled display must be per-monitor DPI aware, or every
+  coordinate they read or click is the scaled one.
 - Tk withdraws its content when parented into a still-hidden window; the
   host shows it again once, a turn after its first showEvent.
 - VcXsrv, once its window is our child: repaints only top-level windows
