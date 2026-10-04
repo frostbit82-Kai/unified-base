@@ -76,7 +76,10 @@ user's to run — hand them the command; never type a password.
   pass, 9 skipped as of 2026-10-04 morning; the Linux pass after it added 4
   portable checks and 1 Linux-host one, so expect 63 pass, 10 skipped.
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
-  reports no CPU time / parent for other processes.
+  reports no CPU time / parent for other processes. The run uses a
+  throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
+  `tmp*-<hash>.log` per module tab in the real `.unified_base\logs` —
+  safe to delete there.
 - Linux GUI tests run on a nested Xvfb display, never the user's desktop;
   never `pkill -f` (it matches Claude's own shell).
 

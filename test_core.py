@@ -4,6 +4,7 @@
 Run:  python3 test_core.py   (inside the .venv — needs PyQt6 importable)
 No framework — plain asserts. Fails loudly if core logic breaks.
 """
+import atexit
 import os
 import shutil
 import subprocess
@@ -15,6 +16,24 @@ from pathlib import Path
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import main  # noqa: E402
 
+
+def _use_app_dir(d):
+    """Point every file and folder main keeps under ~/.unified_base at `d`."""
+    d = Path(d)
+    for attr, name in [("APP_DIR", ""), ("CONFIG_FILE", "modules.json"),
+                       ("PREFS_FILE", "prefs.json"),
+                       ("LIBRARY_FILE", "library.json"),
+                       ("LAYOUTS_FILE", "layouts.json"),
+                       ("ENVS_DIR", "envs"), ("LOG_DIR", "logs")]:
+        setattr(main, attr, d / name if name else d)
+
+
+# The whole run gets a throwaway app folder: module tabs write logs and envs,
+# the Wine bridge makes its prefix, and none of it belongs in the user's real
+# ~/.unified_base (it collected a tmp*.log per module tab per run).
+_SANDBOX = tempfile.mkdtemp(prefix="ub-test-")
+atexit.register(shutil.rmtree, _SANDBOX, ignore_errors=True)
+_use_app_dir(_SANDBOX)
 
 _APP = None
 ON_WINDOWS = main.IS_WINDOWS     # the real host; _as_windows() only pretends
@@ -482,13 +501,7 @@ def _settle(app, done, secs=3.0):
 def _row_window(app, d, n, width=1200):
     """A shown UnifiedBase with `n` merge panes, its state in temp dir `d`,
     sized narrower than the panes need — the case both row checks care about."""
-    sandbox = Path(d)
-    for attr, name in [("APP_DIR", ""), ("CONFIG_FILE", "modules.json"),
-                       ("PREFS_FILE", "prefs.json"),
-                       ("LIBRARY_FILE", "library.json"),
-                       ("LAYOUTS_FILE", "layouts.json"),
-                       ("ENVS_DIR", "envs"), ("LOG_DIR", "logs")]:
-        setattr(main, attr, sandbox / name if name else sandbox)
+    _use_app_dir(d)
     main.save_configs([main.ModuleConfig(name=f"m{i}", project_dir=str(d),
                                         entry="main.py", runtime="python")
                        for i in range(n)])
@@ -2078,6 +2091,7 @@ if __name__ == "__main__":
         if ON_WINDOWS and fn in LINUX_HOST:
             print(f"skip {fn.__name__} (Linux host only)")
             continue
+        _use_app_dir(_SANDBOX)      # a check may have left it on its own temp dir
         fn()
         print(f"ok  {fn.__name__}")
     print("ALL CHECKS PASS")
