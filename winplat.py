@@ -59,6 +59,7 @@ SWP_NOACTIVATE, SWP_FRAMECHANGED, SWP_SHOWWINDOW = 0x0010, 0x0020, 0x0040
 SW_HIDE, SW_SHOW, SW_RESTORE = 0, 5, 9
 GW_OWNER = 4
 GA_PARENT = 1
+WM_MOVE = 0x0003
 WM_CLOSE = 0x0010
 WM_PARENTNOTIFY = 0x0210
 CLICKS = {0x0201, 0x0204, 0x0207, 0x020B, 0x0246}   # L/R/M/X button, pointer down
@@ -112,6 +113,10 @@ ShowWindow = _proto(user32, "ShowWindow", wintypes.BOOL, HWND, ctypes.c_int)
 PostMessageW = _proto(user32, "PostMessageW", wintypes.BOOL, HWND,
                       wintypes.UINT, wintypes.WPARAM, wintypes.LPARAM)
 SetFocus = _proto(user32, "SetFocus", HWND, HWND)
+ClientToScreen = _proto(user32, "ClientToScreen", wintypes.BOOL, HWND,
+                        ctypes.POINTER(wintypes.POINT))
+InvalidateRect = _proto(user32, "InvalidateRect", wintypes.BOOL, HWND,
+                        ctypes.c_void_p, wintypes.BOOL)
 GetGUIThreadInfo = _proto(user32, "GetGUIThreadInfo", wintypes.BOOL,
                           wintypes.DWORD, ctypes.POINTER(GUITHREADINFO))
 # 64-bit Windows has the Ptr variants; 32-bit exports only the plain ones.
@@ -539,6 +544,19 @@ class Win32EmbedHost(QWidget):
         self._focus_poll = QTimer(self)
         self._focus_poll.setInterval(250)
         self._focus_poll.timeout.connect(self._poll_focus)
+        self._screen_pos = None
+        # VcXsrv repaints only the windows EnumThreadWindows lists, which an
+        # adopted (no longer top-level) window isn't: it froze on screen on
+        # its last frame while the app kept drawing.
+        # ponytail: repaint at 30 Hz whether or not anything changed; the X
+        # DAMAGE extension could say when, if the cost ever shows.
+        self._repaint = QTimer(self)
+        self._repaint.setInterval(33)
+        self._repaint.timeout.connect(
+            lambda: InvalidateRect(self.child_wid, None, False))
+        if _exe_name(window_pid(self.child_wid), {}) in X_SERVERS:
+            self._focus_poll.timeout.connect(self._sync_xserver)
+            self._repaint.start()
         self._focus_poll.start()
 
     def _host_wid(self) -> int:
@@ -676,6 +694,28 @@ class Win32EmbedHost(QWidget):
         # super() spins forever in PyQt6 6.9 (seen under Wine), so don't.
         return False, 0
 
+    def _sync_xserver(self):
+        """Keep an X server's copy of this window's screen position true.
+
+        VcXsrv maps clicks through its own copy, refreshed only on the
+        child's WM_MOVE/WM_SIZE — which a child carried along by its parent
+        (splitter, scrolling, Independent, the launcher window) never gets,
+        so clicks landed hundreds of pixels off. With a stale copy it also
+        MoveWindows the child to screen coordinates, as if top-level.
+        ponytail: polled with the focus check (250 ms), so the copy lags a
+        move by that much; hook the ancestors' moves if it ever shows."""
+        if not self.child_alive():
+            return
+        r = wintypes.RECT()
+        GetWindowRect(self.child_wid, ctypes.byref(r))
+        o = wintypes.POINT(0, 0)
+        ClientToScreen(self._host_wid(), ctypes.byref(o))
+        if (r.left, r.top) != (o.x, o.y):
+            self._resize_child()           # pushed off our corner: pin it back
+        elif (r.left, r.top) != self._screen_pos:
+            PostMessageW(self.child_wid, WM_MOVE, 0, 0)    # VcXsrv re-reads it
+        self._screen_pos = (r.left, r.top)
+
     def _poll_focus(self):
         if not self.child_alive():
             return
@@ -719,7 +759,7 @@ class Win32EmbedHost(QWidget):
     def detach(self):
         """Hand the window back to the desktop as it was, if it still exists —
         a module that drops to panel mode keeps running in its own window."""
-        for t in (self._heal_timer, self._focus_poll):
+        for t in (self._heal_timer, self._focus_poll, self._repaint):
             t.stop()
         if self._watched is not None:
             self._watched.removeEventFilter(self)
