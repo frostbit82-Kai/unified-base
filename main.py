@@ -2981,9 +2981,25 @@ def chrome_sandbox_hint(text: str) -> str | None:
     0755. That only breaks on distros that block unprivileged user namespaces
     (Ubuntu: kernel.apparmor_restrict_unprivileged_userns=1) — Chromium can't
     build a namespace sandbox, falls back to the SUID helper, finds it not
-    root-owned, and aborts before any app code runs. Linux-only; the trigger
-    text never appears on Windows/macOS.
+    root-owned, and aborts before any app code runs. That abort is Linux-only.
+
+    Windows has its own: sandboxed Chromium processes run as app containers,
+    which may only read a folder that grants the ALL APPLICATION PACKAGES
+    groups. An installed Chrome/Edge has that; a portable Chromium (or an
+    Electron app) unzipped elsewhere often doesn't, and the page never loads.
     """
+    m = re.search(r"Sandbox cannot access executable (.+)\\[^\\]+\. Check", text)
+    if m:
+        folder = m.group(1).strip()
+        return ("Chromium's sandbox can't read its own program folder:\n"
+                f"    {folder}\n"
+                "Windows runs the sandboxed browser processes as app "
+                "containers, and this folder doesn't let them in (an installed "
+                "Chrome or Edge does; a portable copy often doesn't), so pages "
+                "stay blank. Fix it once, sandbox stays on — from any "
+                "terminal, then Restart:\n"
+                f'    icacls "{folder}" /grant "*S-1-15-2-1:(OI)(CI)(RX)" '
+                '/grant "*S-1-15-2-2:(OI)(CI)(RX)"')
     if "failed to execvp" in text and "zygote_host_impl_linux" in text:
         # Second act of the same story: once the SUID helper IS configured,
         # it re-execs the browser by splitting a command line on whitespace,
@@ -4151,8 +4167,7 @@ class ModuleTab(QWidget):
         env = QProcessEnvironment.systemEnvironment()
         force_x11_env(env)
         p.setProcessEnvironment(env)
-        p.readyReadStandardOutput.connect(
-            lambda: self._log(proc_text(p.readAllStandardOutput())))
+        p.readyReadStandardOutput.connect(lambda: self._handle_browser_output(p))
         p.finished.connect(self._on_browser_finished)
         p.errorOccurred.connect(lambda e: self._log(f"Browser error: {e}"))
         args = [f"--app={url}", f"--user-data-dir={prof}", "--new-window",
@@ -4168,6 +4183,17 @@ class ModuleTab(QWidget):
         self._win_baseline = all_window_ids() if EMBEDDING_OK else set()
         start_qprocess(p, browser, args)
         self._begin_embed(self.cfg.embed)
+
+    def _handle_browser_output(self, p: QProcess):
+        text = proc_text(p.readAllStandardOutput())
+        self._log(text)
+        # No Retry-without-sandbox button here: startup args go to the dev
+        # server, not the browser, so the hint's own fix is the way.
+        if not self._warned_sandbox:
+            hint = chrome_sandbox_hint(text)
+            if hint:
+                self._warned_sandbox = True
+                self._log(hint)
 
     def _web_url_timeout(self):
         if self._await_url and not self._browser_launched:

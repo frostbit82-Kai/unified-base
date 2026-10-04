@@ -179,6 +179,15 @@ def check_chrome_sandbox_hint():
            "Check failed: . : Invalid argument (22)")
     hint = main.chrome_sandbox_hint(zyg)
     assert hint and "--no-sandbox" in hint and "spaces" in hint, hint
+    # Windows: a portable Chromium whose folder app containers can't read
+    # (verbatim, D:\chrome-win on an SD card). The fix names that folder.
+    win = (r"[2164:12540:1003/192948.747:ERROR:sandbox\policy\win\sandbox_win"
+           r".cc:805] Sandbox cannot access executable D:\Apps\chrome win\chro"
+           r"me.EXE. Check filesystem permissions are valid. See https://bit.l"
+           r"y/31yqMJR.: Access is denied. (0x5)")
+    hint = main.chrome_sandbox_hint(win)
+    assert hint and r'icacls "D:\Apps\chrome win" /grant' in hint, hint
+    assert "S-1-15-2-1" in hint and "S-1-15-2-2" in hint, hint
     # Ordinary output must not trigger either branch.
     assert main.chrome_sandbox_hint("Debugger listening on ws://...") is None
 
