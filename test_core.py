@@ -1248,8 +1248,10 @@ class _FakeProc:
 def check_start_qprocess():
     """One start point; cmd.exe gets its line verbatim on Windows."""
     fp = _FakeProc()
-    main.start_qprocess(fp, "node", ["a b", 3])
-    assert fp.calls == [("start", "node", ["a b", "3"])], fp.calls
+    # Not on any PATH: on real Windows a bare name that is (node, once
+    # installed) resolves to its full path, which is resolve_program's job.
+    main.start_qprocess(fp, "ub-no-such-tool", ["a b", 3])
+    assert fp.calls == [("start", "ub-no-such-tool", ["a b", "3"])], fp.calls
     with _as_windows():
         keep = main.shutil.which
         main.shutil.which = lambda name: {"npm": r"C:\nodejs\npm.CMD"}.get(name)
