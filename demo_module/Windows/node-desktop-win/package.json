@@ -1,0 +1,14 @@
+{
+  "name": "unified-base-electron-desktop-win",
+  "version": "1.0.0",
+  "description": "Electron Windows demo for Unified Base (twin of Linux/node-desktop) — IPC, native menu, dialogs, OS integration.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "Unified Base",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.0.0"
+  }
+}

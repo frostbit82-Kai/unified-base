@@ -1,0 +1,14 @@
+{
+  "name": "unified-base-electron-windows",
+  "version": "1.0.0",
+  "description": "Electron Windows demo for Unified Base — the Electron APIs that reach into Windows: window thumbnails, DPAPI, system colours, power events, displays, shell icons and shortcuts.",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron ."
+  },
+  "author": "Unified Base",
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^44.0.0"
+  }
+}

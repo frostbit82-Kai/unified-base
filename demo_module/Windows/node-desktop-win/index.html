@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'">
+<title>Electron · IPC &amp; desktop integration</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 26px 30px; background: #0d1117; color: #e6edf3;
+         font: 14px/1.55 system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: #7d8590; font-size: 13px; margin-bottom: 18px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .card { background: #161b22; border: 1px solid #21262d; border-radius: 10px;
+          padding: 14px 16px; min-width: 0; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
+             color: #7d8590; margin: 0 0 10px; font-weight: 600; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 4px 14px; margin: 0;
+       font-family: ui-monospace, monospace; font-size: 12.5px; }
+  dt { color: #7d8590; }
+  dd { margin: 0; color: #9fd8ef; overflow-wrap: anywhere; }
+  .bar { height: 8px; background: #21262d; border-radius: 999px; overflow: hidden;
+         margin: 8px 0 4px; }
+  .bar > i { display: block; height: 100%; background: #2ea043; width: 0; }
+  button { background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+           padding: 8px 13px; border-radius: 8px; cursor: pointer; font-size: 13px; }
+  button:hover { background: #30363d; }
+  button.primary { background: #238636; border-color: #2ea043; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  pre { background: #010409; border: 1px solid #21262d; border-radius: 8px;
+        padding: 10px 12px; max-height: 190px; overflow: auto; font-size: 12px;
+        margin: 8px 0 0; white-space: pre-wrap; word-break: break-word; }
+  .muted { color: #7d8590; }
+  footer { margin-top: 16px; color: #7d8590; font-size: 12px;
+           font-family: ui-monospace, monospace; }
+  a { color: #58a6ff; }
+</style>
+</head>
+<body>
+  <h1>Electron · IPC &amp; desktop integration · Windows</h1>
+  <div class="sub">contextBridge · ipcMain.handle · native menu · file dialog ·
+    notifications — <span class="muted">nodeIntegration off, contextIsolation on</span></div>
+
+  <div class="row">
+    <button class="primary" id="open">Open file… <span class="muted">(Ctrl+O)</span></button>
+    <button id="refresh">Refresh info <span class="muted">(Ctrl+R)</span></button>
+    <button id="notify">Notify <span class="muted">(Ctrl+N)</span></button>
+    <button id="devtools">DevTools</button>
+    <button id="fullscreen">Fullscreen</button>
+    <button id="minimize">Minimize</button>
+    <button id="external">Open electronjs.org</button>
+  </div>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Runtime (main process)</h2>
+      <dl id="info"><dt>loading…</dt><dd></dd></dl>
+    </div>
+    <div class="card">
+      <h2>Live sample <span class="muted">— polled by the renderer</span></h2>
+      <dl id="live"><dt>waiting…</dt><dd></dd></dl>
+      <div class="bar"><i id="membar"></i></div>
+      <div class="muted" id="memlabel">memory</div>
+    </div>
+  </div>
+
+  <div class="card" style="margin-top:14px">
+    <h2>File inspector <span class="muted">— main process reads, renderer only displays</span></h2>
+    <div id="fileinfo" class="muted">No file opened yet. Use the button or Ctrl+O.</div>
+    <pre id="preview" hidden></pre>
+  </div>
+
+  <footer id="status">ready</footer>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const bytes = (n) => {
+    const u = ['B', 'KB', 'MB', 'GB', 'TB'];
+    let i = 0;
+    while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+    return `${n.toFixed(i ? 1 : 0)} ${u[i]}`;
+  };
+  const dur = (s) => {
+    const d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600);
+    const m = Math.floor(s % 3600 / 60);
+    return d ? `${d}d ${h}h ${m}m` : h ? `${h}h ${m}m` : `${m}m`;
+  };
+  const fill = (el, pairs) => {
+    el.innerHTML = '';
+    for (const [k, v] of pairs) {
+      const dt = document.createElement('dt'); dt.textContent = k;
+      const dd = document.createElement('dd'); dd.textContent = v;  // textContent: no HTML injection
+      el.append(dt, dd);
+    }
+  };
+  const say = (msg) => { $('status').textContent = msg; };
+
+  async function refresh() {
+    const i = await window.desktop.systemInfo();
+    fill($('info'), [
+      ['electron', i.electron], ['chrome', i.chrome], ['node', i.node],
+      ['v8', i.v8.split('-')[0]], ['platform', i.platform], ['arch', i.arch],
+      ['cpu', `${i.cpus}× ${i.cpuModel.replace(/\s+/g, ' ').slice(0, 28)}`],
+      ['memory', bytes(i.totalMem)], ['pid', i.pid]
+    ]);
+    say(`system info refreshed at ${new Date().toLocaleTimeString()}`);
+  }
+
+  async function sample() {
+    const s = await window.desktop.sample();
+    const used = s.totalMem - s.freeMem;
+    fill($('live'), [
+      ['free', bytes(s.freeMem)],
+      ['used', bytes(used)],
+      ['this app (rss)', bytes(s.rss)],
+      ['cpu', `${s.cpu.toFixed(1)} %  (${navigator.hardwareConcurrency} threads)`],
+      ['os uptime', dur(s.uptime)]
+    ]);
+    const pct = used / s.totalMem;
+    $('membar').style.width = `${(pct * 100).toFixed(1)}%`;
+    $('membar').style.background = pct > 0.9 ? '#ff7b72' : pct > 0.75 ? '#f0883e' : '#2ea043';
+    $('memlabel').textContent = `${(pct * 100).toFixed(1)}% of ${bytes(s.totalMem)} used`;
+  }
+
+  async function openFile() {
+    const r = await window.desktop.openFile();
+    if (r.canceled) { say('file dialog cancelled'); return; }
+    $('fileinfo').innerHTML = '';
+    $('fileinfo').classList.remove('muted');
+    const dl = document.createElement('dl');
+    fill(dl, [
+      ['name', r.name], ['size', bytes(r.size)], ['lines (in slice)', r.lines],
+      ['modified', new Date(r.modified).toLocaleString()], ['path', r.path]
+    ]);
+    $('fileinfo').append(dl);
+    const pre = $('preview');
+    pre.hidden = false;
+    pre.textContent = r.preview + (r.truncated ? '\n\n… truncated at 4 KB …' : '');
+    say(`read ${bytes(r.size)} from ${r.name}`);
+  }
+
+  $('open').onclick = openFile;
+  $('refresh').onclick = refresh;
+  $('notify').onclick = async () => {
+    const r = await window.desktop.notify('IPC round-trip complete.');
+    say(r.ok ? 'notification sent' : `notifications unavailable (${r.reason})`);
+  };
+  $('devtools').onclick = () => window.desktop.windowState('devtools');
+  $('minimize').onclick = () => window.desktop.windowState('minimize');
+  $('fullscreen').onclick = async () => {
+    const r = await window.desktop.windowState('fullscreen');
+    say(`fullscreen: ${r.fullscreen}`);
+  };
+  $('external').onclick = async () => {
+    await window.desktop.openExternal('https://www.electronjs.org/');
+    say('opened in your default browser, not in this window');
+  };
+
+  // Native menu items arrive here through preload's forwarding.
+  window.desktop.onMenuCommand((cmd) => {
+    say(`menu: ${cmd}`);
+    if (cmd === 'refresh') refresh();
+    if (cmd === 'open') openFile();
+    if (cmd === 'notify') $('notify').click();
+  });
+
+  refresh();
+  sample();
+  setInterval(sample, 1500);
+</script>
+</body>
+</html>

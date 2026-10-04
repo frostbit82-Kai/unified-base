@@ -1,0 +1,252 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:">
+<title>Electron × Windows</title>
+<style>
+  :root { color-scheme: dark; --accent: #2ea043; }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 22px 26px; background: #0d1117; color: #e6edf3;
+         font: 14px/1.5 "Segoe UI Variable", "Segoe UI", system-ui, sans-serif; }
+  h1 { font-size: 20px; margin: 0 0 2px; }
+  .sub { color: #7d8590; font-size: 13px; margin-bottom: 16px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 14px; }
+  .card { background: #161b22; border: 1px solid #21262d; border-radius: 10px;
+          padding: 14px 16px; min-width: 0; }
+  .card.wide { grid-column: 1 / -1; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .07em;
+             color: #7d8590; margin: 0 0 10px; font-weight: 600; }
+  dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; margin: 0;
+       font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.5px; }
+  dt { color: #7d8590; } dd { margin: 0; color: #9fd8ef; overflow-wrap: anywhere; }
+  button { background: #21262d; border: 1px solid #30363d; color: #e6edf3;
+           padding: 7px 13px; border-radius: 8px; cursor: pointer; font: inherit; font-size: 13px; }
+  button:hover { background: #30363d; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin: 8px 0; }
+  .muted, .note { color: #7d8590; font-size: 12.5px; }
+  .note { margin: 8px 0 0; }
+  textarea, .out { width: 100%; background: #010409; color: #e6edf3; border: 1px solid #21262d;
+                   border-radius: 8px; padding: 8px 10px; font: 12.5px "Cascadia Mono", Consolas, monospace; }
+  textarea { height: 52px; resize: vertical; }
+  .out { min-height: 40px; overflow-wrap: anywhere; color: #9fd8ef; margin-top: 6px; }
+  .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+  .shot { background: #010409; border: 1px solid #21262d; border-radius: 8px; padding: 6px; min-width: 0; }
+  .shot img.t { width: 100%; aspect-ratio: 16 / 10; object-fit: contain; display: block; }
+  .shot .n { font-size: 12px; color: #c9d1d9; display: flex; gap: 6px; align-items: center;
+             margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .shot .n img { width: 16px; height: 16px; flex: none; }
+  .kind { font-size: 10px; color: #7d8590; text-transform: uppercase; }
+  .swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 4px 10px; }
+  .sw { display: flex; align-items: center; gap: 8px; font: 12px "Cascadia Mono", Consolas, monospace; color: #c9d1d9; }
+  .sw i { width: 18px; height: 18px; border-radius: 4px; border: 1px solid #30363d; flex: none; }
+  .big { width: 44px; height: 44px; border-radius: 10px; border: 1px solid #30363d; }
+  .log { list-style: none; padding: 0; margin: 8px 0 0; font: 12px "Cascadia Mono", Consolas, monospace;
+         color: #9fd8ef; max-height: 110px; overflow: auto; }
+  .file { display: flex; gap: 14px; align-items: flex-start; margin-top: 8px; }
+  .file img { max-width: 140px; max-height: 140px; border-radius: 6px; }
+  footer { margin-top: 14px; color: #7d8590; font: 12px "Cascadia Mono", Consolas, monospace; }
+</style>
+</head>
+<body>
+  <h1>Electron × Windows</h1>
+  <div class="sub">What the main process can ask Windows for — window thumbnails, DPAPI,
+    system colours, power events, displays, Explorer's icons and shortcuts</div>
+
+  <div class="grid">
+    <div class="card wide">
+      <h2>Every window and screen — desktopCapturer</h2>
+      <div class="row"><button class="primary" id="shots">Refresh</button>
+        <span class="muted" id="shot-count"></span></div>
+      <div class="gallery" id="gallery"></div>
+      <p class="note">Live thumbnails, straight from Windows' compositor. Embedded
+        in Unified Base, this window is a child window — and drops out of the list.</p>
+    </div>
+
+    <div class="card">
+      <h2>Secrets — safeStorage = DPAPI</h2>
+      <textarea id="plain" spellcheck="false">my API key: hunter2</textarea>
+      <div class="row">
+        <button class="primary" id="enc">Encrypt</button>
+        <button id="dec">Decrypt</button>
+        <button id="tamper">Flip one bit</button>
+      </div>
+      <div class="out" id="cipher">—</div>
+      <p class="note" id="dpapi-note">AES-GCM under a key DPAPI locks to your Windows
+        logon: it decrypts for you, on this PC, for no one else — and refuses a
+        ciphertext with one bit changed.</p>
+    </div>
+
+    <div class="card">
+      <h2>Colours &amp; theme — live</h2>
+      <div class="row"><span class="big" id="accent"></span>
+        <dl id="theme"><dt>…</dt><dd></dd></dl></div>
+      <div class="swatches" id="sys"></div>
+      <p class="note">Change the accent colour or a contrast theme in Settings —
+        this card (and the buttons) follow within a moment.</p>
+    </div>
+
+    <div class="card">
+      <h2>Power</h2>
+      <dl id="power"><dt>…</dt><dd></dd></dl>
+      <div class="row"><button id="awake">Keep the display awake</button></div>
+      <ul class="log" id="power-log"><li class="muted">events: lock the PC (Win+L),
+        sleep it, or pull the plug</li></ul>
+    </div>
+
+    <div class="card">
+      <h2>Displays</h2>
+      <div id="displays"></div>
+    </div>
+
+    <div class="card">
+      <h2>Explorer's view of a file</h2>
+      <div class="row"><button class="primary" id="inspect">Pick a file…</button>
+        <button id="reveal" disabled>Show in Explorer</button></div>
+      <div class="file"><img id="ficon" alt=""><img id="fthumb" alt=""></div>
+      <dl id="fdetail"></dl>
+      <p class="note">Starts in your Start Menu: pick a shortcut and
+        <code>shell.readShortcutLink</code> shows where it really goes.</p>
+    </div>
+  </div>
+
+  <footer id="status">ready</footer>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const status = (s) => { $('status').textContent = s; };
+  function fill(dl, pairs) {
+    dl.replaceChildren(...pairs.flatMap(([k, v]) => {
+      const dt = document.createElement('dt'), dd = document.createElement('dd');
+      dt.textContent = k; dd.textContent = v;
+      return [dt, dd];
+    }));
+  }
+
+  // -- windows ---------------------------------------------------------------
+  async function shots() {
+    const t0 = performance.now();
+    const list = await window.win.windows();
+    $('gallery').replaceChildren(...list.map((s) => {
+      const d = document.createElement('div'); d.className = 'shot';
+      if (s.thumb) { const im = new Image(); im.className = 't'; im.src = s.thumb; d.append(im); }
+      const n = document.createElement('div'); n.className = 'n';
+      if (s.icon) { const ic = new Image(); ic.src = s.icon; n.append(ic); }
+      const k = document.createElement('span'); k.className = 'kind'; k.textContent = s.kind;
+      n.append(k, document.createTextNode(' ' + s.name));
+      n.title = s.name;
+      d.append(n);
+      return d;
+    }));
+    $('shot-count').textContent = `${list.length} sources in ${Math.round(performance.now() - t0)} ms`;
+  }
+  $('shots').onclick = shots;
+
+  // -- DPAPI -----------------------------------------------------------------
+  let cipher = null;
+  $('enc').onclick = async () => {
+    const r = await window.win.encrypt($('plain').value);
+    if (!r.ok) { $('cipher').textContent = 'encryption unavailable'; return; }
+    cipher = r.b64;
+    $('cipher').textContent = `${r.bytes} bytes: ${r.b64}`;
+    status('encrypted with DPAPI');
+  };
+  $('dec').onclick = async () => {
+    if (!cipher) return;
+    const r = await window.win.decrypt(cipher);
+    $('cipher').textContent = r.ok ? `decrypted: ${r.text}` : `refused: ${r.error}`;
+  };
+  $('tamper').onclick = () => {
+    if (!cipher) return;
+    const b = Uint8Array.from(atob(cipher), (c) => c.charCodeAt(0));
+    b[b.length - 5] ^= 1;
+    cipher = btoa(String.fromCharCode(...b));
+    $('cipher').textContent = `one bit flipped — now Decrypt: ${cipher}`;
+  };
+
+  // -- colours ---------------------------------------------------------------
+  function showColors(c) {
+    $('accent').style.background = c.accent;
+    document.documentElement.style.setProperty('--accent', c.accent);
+    fill($('theme'), [['accent', c.accent], ['dark', c.dark ? 'yes' : 'no'],
+                      ['contrast', c.highContrast ? 'on' : 'off']]);
+    $('sys').replaceChildren(...c.system.map(([name, hex]) => {
+      const s = document.createElement('div'); s.className = 'sw';
+      const i = document.createElement('i'); i.style.background = hex;
+      s.append(i, document.createTextNode(name));
+      s.title = hex;
+      return s;
+    }));
+  }
+  window.win.onColors((c) => { showColors(c); status('Windows changed a colour setting'); });
+
+  // -- power -----------------------------------------------------------------
+  async function power() {
+    const p = await window.win.power();
+    fill($('power'), [['source', p.onBattery ? 'battery' : 'AC power'],
+                      ['user', `${p.idle} (idle ${p.idleSeconds} s)`],
+                      ['display', p.keepingAwake ? 'kept awake' : 'normal']]);
+    $('awake').textContent = p.keepingAwake ? 'Let the display sleep' : 'Keep the display awake';
+    $('awake').dataset.on = p.keepingAwake ? '1' : '';
+  }
+  $('awake').onclick = async () => { await window.win.keepAwake(!$('awake').dataset.on); power(); };
+  window.win.onPower(({ ev, at }) => {
+    const li = document.createElement('li'); li.textContent = `${at}  ${ev}`;
+    $('power-log').prepend(li);
+    power();
+  });
+
+  // -- displays --------------------------------------------------------------
+  function showDisplays(list) {
+    $('displays').replaceChildren(...list.map((d) => {
+      const dl = document.createElement('dl');
+      fill(dl, [['display', `${d.label}${d.primary ? ' (primary)' : ''}`],
+                ['size', `${d.size} dip ≈ ${d.pixels} px at ${d.scale} %`],
+                ['refresh', `${d.hz} Hz · ${d.depth}-bit colour`],
+                ['', `${d.internal ? 'built-in' : 'external'} · rotation ${d.rotation}° · touch ${d.touch}`]]);
+      dl.style.marginBottom = '10px';
+      return dl;
+    }));
+  }
+  window.win.onDisplays((list) => { showDisplays(list); status('display layout changed'); });
+
+  // -- shell -----------------------------------------------------------------
+  let picked = null;
+  $('inspect').onclick = async () => {
+    const r = await window.win.inspectFile();
+    if (r.canceled) return;
+    picked = r.path;
+    $('reveal').disabled = false;
+    $('ficon').src = r.icon;
+    $('fthumb').src = r.thumb || '';
+    $('fthumb').style.display = r.thumb ? '' : 'none';
+    const rows = [['file', r.name]];
+    if (!r.thumb) rows.push(['thumbnail', 'no thumbnail handler for this type']);
+    if (r.link) {
+      if (r.link.error) rows.push(['shortcut', r.link.error]);
+      else {
+        rows.push(['target', r.link.target || '(none: a Store app)']);
+        if (r.link.args) rows.push(['arguments', r.link.args]);
+        if (r.link.cwd) rows.push(['start in', r.link.cwd]);
+        if (r.link.description) rows.push(['comment', r.link.description]);
+        if (r.link.appUserModelId) rows.push(['AUMID', r.link.appUserModelId]);
+      }
+    }
+    fill($('fdetail'), rows);
+  };
+  $('reveal').onclick = () => picked && window.win.reveal(picked);
+
+  // -- go --------------------------------------------------------------------
+  (async () => {
+    showColors(await window.win.colors());
+    showDisplays(await window.win.displays());
+    await power();
+    setInterval(power, 2000);
+    await shots();
+    status('ready');
+  })().catch((e) => status(e.message));
+</script>
+</body>
+</html>
