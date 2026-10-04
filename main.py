@@ -807,8 +807,10 @@ TOOLCHAIN_PKGS = {
                "zypper": "npm", "brew": "node", "winget": "OpenJS.NodeJS"},
     "mvn":    {"apt": "maven", "dnf": "maven", "pacman": "maven",
                "zypper": "maven", "brew": "maven"},
+    # Windows: the GNU toolchain links with its own bundled MinGW. Rustup's
+    # default (MSVC) needs Visual Studio's linker, a multi-GB install.
     "cargo":  {"apt": "cargo", "dnf": "cargo", "pacman": "rust",
-               "zypper": "cargo", "brew": "rust"},
+               "zypper": "cargo", "brew": "rust", "winget": "Rustlang.Rust.GNU"},
     "composer": {"apt": "composer", "dnf": "composer", "pacman": "composer",
                  "zypper": "php-composer2", "brew": "composer",
                  "winget": "Composer.Composer"},
