@@ -69,7 +69,10 @@ only — and the launcher picks how to run it on the current machine:
 | **Linux only** (ELF binary, GTK/X11 Python) | native | **WSL** |
 
 Detection only trusts strong evidence: a binary's own header, a `.csproj`
-targeting `-windows`, a `gi`/`Xlib` import. Override it per module with
+targeting `-windows`, a `gi`/`Xlib` import, or a program that cannot start
+anywhere but Windows (a module-level `import winreg`, Ruby's `unless
+Gem.win_platform?`, Java FFM on `user32`, the `windows-sys` crate, a
+Windows container base image). Override it per module with
 right-click ▸ **Runs on**. The setting travels with the config, so a module
 saved on one OS does the right thing when opened on the other.
 
@@ -82,7 +85,11 @@ that run anywhere get no mark.
 prefix at `~/.unified_base/wine/default`. Wine draws real X11 windows, so
 Windows apps embed into panes exactly like Linux ones. Builds still run
 natively — a Windows-only .NET app is published for `win-x64` by the Linux
-SDK, then Wine runs the `.exe`. Point a module at its own prefix by setting
+SDK, and a Windows-only Rust crate is built for `x86_64-pc-windows-gnu` with
+MinGW — then Wine runs the `.exe`. Windows-only programs in Python, Java,
+Ruby, PHP or Node.js would need that language's Windows build inside Wine,
+so Linux explains instead of running them (Windows containers likewise).
+Point a module at its own prefix by setting
 `WINEPREFIX` in its Environment variables. Wine detaches every program a
 Windows program starts (the app a `.bat` runs, the game a launcher opens);
 the launcher tags each launch so Stop and the meters still reach them.

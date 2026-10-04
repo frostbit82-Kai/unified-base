@@ -69,8 +69,9 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Real Windows: 59 pass, 9 skipped
-  (Linux-host only). Under Wine `check_proc_table` and `check_sampler` fail
+- `python test_core.py` (inside `.venv`). Linux: 72 pass. Real Windows: 59
+  pass, 9 skipped as of 2026-10-04 morning; the Linux pass after it added 3
+  portable checks and 1 Linux-host one, so expect 62 pass, 10 skipped. Under Wine `check_proc_table` and `check_sampler` fail
   only because Wine reports no CPU time / parent for other processes.
 - Linux GUI tests run on a nested Xvfb display, never the user's desktop;
   never `pkill -f` (it matches Claude's own shell).
@@ -137,7 +138,47 @@ step. Shared code changed on Windows that Linux runs too: `npm_setup`
 header compaction, `proc_text`'s escape stripping, `which_fresh`. The
 Linux demos weren't re-run on Linux after these.
 
+**Linux pass, 2026-10-04 (after the Windows session).** All 19 Linux demos
+re-run on Linux after the shared-code changes: start, embed, Restart, Stop.
+The Windows demos on Linux: the cross-platform twins run natively
+(python-fractal-win, php-forms-win, java-table-win, rust-raytracer-win,
+node-desktop-win, web-worker-win, docker-multistage-win) as do the ones that
+degrade gracefully off Windows (web-edge, node-windows, php-com). Compiled
+Windows-only demos run through Wine and embed: c-paint, c-sysmon,
+win32-native, winforms-dotnet, csharp-winrt, and rust-synth (cross-compiled
+for `x86_64-pc-windows-gnu`, the C# pattern). csharp-binding-win: WPF
+FailFasts in font fallback under Wine (Wine limit). The interpreted
+Windows-only ones (python-winapi, java-ffm, ruby-com, ruby-lsystem-win) and
+docker-windows are now *detected* as Windows (they get the four-pane mark
+on both OSes) and Linux says why it can't run them. Not built yet, but
+proven: a Windows Python 3.12 inside the Wine prefix runs python-winapi's
+`--selftest` — Windows toolchains in the prefix would be the mirror of WSL's.
+Existing configs keep the platform they were added with: on Windows,
+re-add those demos (or right-click ▸ Runs on ▸ Windows) to see the mark.
+
 ## Traps (each cost real time)
+
+- Electron 38+ ignores `ELECTRON_OZONE_PLATFORM_HINT`. With
+  `XDG_SESSION_TYPE=wayland` it opens on the real Wayland desktop even with
+  `WAYLAND_DISPLAY` removed (it finds the default socket): the embed never
+  happens. `X11_BACKEND_HINTS` sets `XDG_SESSION_TYPE=x11` (also for WSL's
+  VcXsrv env).
+- Snap Chromium's AppArmor profile takes signals only from senders labelled
+  `unconfined`. A confined launcher — or one started from Claude Desktop
+  (`claude-desktop-unofficial`) — gets EPERM and leaks every web module's
+  browser. `x_close_clients` then closes it through its X connection
+  (XRes client → XKillClient), which needs no signal permission.
+- A module's launch spec is asked for *after* its setup steps: a build
+  entry's output (the jar mvn makes, make's newest program) doesn't exist on
+  a fresh clone before then — it ran `java -jar (build)`.
+- Not every `*-win` twin is cross-platform: ruby-lsystem-win (Win32 through
+  Fiddle) and csharp-binding-win (WPF) are Windows-only. `detect_platform`'s
+  per-language rules decide (module-level Windows imports, `unless
+  Gem.win_platform?`, FFM on user32, Windows crates outside a cfg table,
+  Windows base images), never the folder name.
+- Hand-copying demo folders into a clone blocks `git pull` (untracked files)
+  and an exFAT copy flips exec bits; compare blob hashes, `git clean`, pull.
+  Windows-built node_modules/target/bin copied along are wrong on Linux.
 
 - Edge signs the Windows account into every throwaway `--user-data-dir` and
   says so in a modal dialog. The dialog's owner is the embedded window, so

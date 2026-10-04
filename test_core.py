@@ -159,7 +159,15 @@ def check_docker_hint():
     win_on_linux = ("ERROR: process \"cmd /S /C dotnet publish\" did not complete "
                     "successfully: unable to find user ContainerUser: no "
                     "matching entries in passwd file")
-    assert "Switch to Windows containers" in main.docker_hint(win_on_linux)
+    with _as_windows():
+        assert "Switch to Windows containers" in main.docker_hint(win_on_linux)
+    keep = main.IS_WINDOWS
+    main.IS_WINDOWS = False          # Linux has no Windows-containers mode
+    try:
+        assert "Docker on Linux runs Linux containers" in \
+            main.docker_hint(win_on_linux)
+    finally:
+        main.IS_WINDOWS = keep
     linux_on_win = ("no matching manifest for windows(10.0.26300)/amd64 in the "
                     "manifest list entries")
     assert "Switch to Linux containers" in main.docker_hint(linux_on_win)
@@ -461,6 +469,16 @@ def check_toolchain_preflight():
     assert cmd is None or "node" in cmd.lower(), cmd
 
 
+def _settle(app, done, secs=3.0):
+    """Pump events until done() or `secs` pass. The offscreen platform settles
+    a top-level resize asynchronously, and a busy machine takes longer than a
+    fixed number of turns."""
+    end = time.monotonic() + secs
+    while not done() and time.monotonic() < end:
+        app.processEvents()
+        time.sleep(0.01)
+
+
 def _row_window(app, d, n, width=1200):
     """A shown UnifiedBase with `n` merge panes, its state in temp dir `d`,
     sized narrower than the panes need — the case both row checks care about."""
@@ -669,10 +687,7 @@ def check_compact_header():
         # and font (and a window can't outgrow its screen), so it's measured.
         full = panes[0]._header_widths()[0]
         win.resize(2 * full + 120, win.height())
-        for _ in range(30):
-            app.processEvents()
-            if all(t.width() >= full for t in panes):
-                break
+        _settle(app, lambda: all(t.width() >= full for t in panes))
         # Nothing in the pane may set a minimum wider than a dragged pane, or
         # the drag below silently does nothing.
         assert panes[0].layout().minimumSize().width() <= main.PANE_MIN_W, \
@@ -903,10 +918,7 @@ def check_geometry_roundtrip():
         win.move(140, 90)
         # The offscreen platform settles a top-level resize asynchronously,
         # so wait for it and compare against the size actually closed at.
-        for _ in range(30):
-            app.processEvents()
-            if (win.width(), win.height()) == size:
-                break
+        _settle(app, lambda: (win.width(), win.height()) == size)
         want = (win.width(), win.height())
         assert want == size, want
         win.close()
@@ -915,10 +927,7 @@ def check_geometry_roundtrip():
 
         again = main.UnifiedBase()
         again.show()
-        for _ in range(30):
-            app.processEvents()
-            if (again.width(), again.height()) == want:
-                break
+        _settle(app, lambda: (again.width(), again.height()) == want)
         assert (again.width(), again.height()) == want, \
             (again.width(), again.height(), want)
         again.close()
@@ -1858,6 +1867,109 @@ def check_os_badge():
         win.close()
 
 
+def check_windows_only_evidence():
+    """Programs that refuse to run anywhere but Windows say so in their own
+    terms; each language's tell marks the module "windows", and a guarded or
+    target-scoped use does not."""
+    def need(files, runtime):
+        with tempfile.TemporaryDirectory() as d:
+            proj = Path(d)
+            for name, text in files.items():
+                (proj / name).parent.mkdir(parents=True, exist_ok=True)
+                (proj / name).write_text(text)
+            return main.detect_platform(proj, runtime, "")
+    assert need({"main.py": "import tkinter\nimport winreg\n"}, "python") == "windows"
+    assert need({"main.py": "try:\n    import winreg\nexcept ImportError:\n"
+                            "    winreg = None\n"}, "python") == ""
+    assert need({"main.rb": "require 'fiddle'\n"
+                            "abort 'Windows only' unless Gem.win_platform?\n"},
+                "ruby") == "windows"
+    assert need({"main.rb": "require 'win32ole'\n"}, "ruby") == "windows"
+    assert need({"main.rb": "require 'tk'\n"}, "ruby") == ""
+    assert need({"src/main/java/A.java": 'var u = SymbolLookup.libraryLookup('
+                 '"user32", arena);'}, "java") == "windows"
+    assert need({"src/main/java/A.java": "class A {}"}, "java") == ""
+    assert need({"Dockerfile": "FROM mcr.microsoft.com/dotnet/runtime:10.0-"
+                               "nanoserver-ltsc2025\n"}, "docker") == "windows"
+    assert need({"Dockerfile": "FROM alpine:3.20\n"}, "docker") == ""
+    cargo = '[package]\nname = "x"\n[dependencies.windows-sys]\nversion = "0.59"\n'
+    assert need({"Cargo.toml": cargo}, "binary") == "windows"
+    scoped = ('[package]\nname = "x"\n'
+              "[target.'cfg(windows)'.dependencies]\nwinapi = \"0.3\"\n")
+    assert need({"Cargo.toml": scoped}, "binary") == ""
+    # The shipped demos: every Linux one and every cross-platform twin stays
+    # portable (x11-native aside); the hard Windows-only ones are marked.
+    marked = {p.name for base in ("Linux", "Windows")
+              for p in sorted((main.DEMO_DIR / base).iterdir())
+              if main.detect_platform(
+                  p, main.detect_runtimes(p)[0],
+                  (main.RUNTIMES[main.detect_runtimes(p)[0]].entries(p)
+                   or [""])[0]) == "windows"}
+    assert marked == {"c-paint", "c-sysmon", "csharp-binding-win",
+                      "csharp-winrt", "docker-windows", "java-ffm",
+                      "python-winapi", "ruby-com", "ruby-lsystem-win",
+                      "rust-synth", "win32-native", "winforms-dotnet"}, marked
+
+
+@linux_host
+def check_wine_runtimes():
+    """On Linux a Windows-only module either crosses over (C#, Rust: build a
+    Windows .exe here, Wine runs it) or says why it can't (interpreted
+    languages need their Windows toolchain; Windows containers need Windows)."""
+    _app()
+    rust = main.ModuleConfig(name="s", project_dir="/p", runtime="binary",
+                             entry=main.BinaryRuntime.CARGO, platform="windows")
+    steps = main.BinaryRuntime.setup_steps(rust)
+    assert [s[1] for s in steps] == ["rustup", "cargo"], steps
+    assert main.BinaryRuntime.WIN_TARGET in steps[1][2]
+    with tempfile.TemporaryDirectory() as d:
+        (Path(d) / "Cargo.toml").write_text('[package]\nname = "synth"\n')
+        rust.project_dir = d
+        prog = main.BinaryRuntime.launch(rust).program
+        assert prog.endswith(f"{main.BinaryRuntime.WIN_TARGET}/release/synth.exe"), prog
+    for rt, word in (("java", "Java"), ("ruby", "Ruby"), ("docker", "Windows containers")):
+        tab = main.ModuleTab(main.ModuleConfig(name=rt, project_dir="/p",
+                                               entry="", runtime=rt,
+                                               platform="windows"))
+        msg = tab._bridge_problem() or ""
+        assert word in msg, (rt, msg)
+        tab.shutdown()
+
+
+def check_launch_after_setup():
+    """What a build entry runs is asked for after its setup has built it."""
+    _app()
+    asked = []
+
+    class Rt:
+        @staticmethod
+        def setup_steps(cfg):
+            return [("build", "true", [], "/")]
+
+        @staticmethod
+        def launch(cfg):
+            asked.append(len(ran))
+            return main.LaunchSpec("x", [], "/")
+    ran = []
+    tab = main.ModuleTab(main.ModuleConfig(name="j", project_dir="/p",
+                                           entry="(build)", runtime="java"))
+    tab._run_command_chain = lambda steps, on_ok: (ran.extend(steps), on_ok())
+    tab._launch_process = lambda *a, **k: None
+    keep = main.RUNTIMES["java"]
+    main.RUNTIMES["java"] = Rt
+    try:
+        tab._start_generic(Path("/p"))
+    finally:
+        main.RUNTIMES["java"] = keep
+    assert asked == [1], asked          # launch() after the build step ran
+    tab.shutdown()
+
+
+def check_x11_hints():
+    """Embedding needs X11 windows; Electron 38+ decides by session type."""
+    assert main.X11_BACKEND_HINTS.get("XDG_SESSION_TYPE") == "x11"
+
+
 if __name__ == "__main__":
     for fn in (check_dep_name, check_declared_deps, check_atomic_write,
                check_config_compat, check_portable_paths,
@@ -1894,7 +2006,9 @@ if __name__ == "__main__":
                check_cmd_metachar_args, check_wsl_setup_env,
                check_wsl_kill_tree, check_force_kill_restart,
                check_wine_family, check_private_wineprefix_boot,
-               check_os_badge):
+               check_os_badge, check_windows_only_evidence,
+               check_wine_runtimes, check_launch_after_setup,
+               check_x11_hints):
         if ON_WINDOWS and fn in LINUX_HOST:
             print(f"skip {fn.__name__} (Linux host only)")
             continue

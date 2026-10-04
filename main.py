@@ -103,7 +103,11 @@ X11_BACKEND_HINTS = {
     "SDL_VIDEODRIVER": "x11",              # SDL 1/2 (games, pygame, love2d)
     "CLUTTER_BACKEND": "x11",              # Clutter / older GNOME apps
     "WINIT_UNIX_BACKEND": "x11",           # Rust winit (egui, wgpu, minifb, bevy)
-    "ELECTRON_OZONE_PLATFORM_HINT": "x11",  # Electron
+    "ELECTRON_OZONE_PLATFORM_HINT": "x11",  # Electron <= 37
+    # Electron 38+ ignores the hint above and picks Wayland from the session
+    # type — then finds the compositor's default socket even with
+    # WAYLAND_DISPLAY removed, and its window opens on the real desktop.
+    "XDG_SESSION_TYPE": "x11",
     "MOZ_ENABLE_WAYLAND": "0",             # Firefox / XUL
 }
 
@@ -461,6 +465,13 @@ PLATFORM_NEEDS = {"": "Runs anywhere", "linux": "Linux only",
                   "windows": "Windows only"}
 
 
+# Runtimes whose Windows-only programs Wine can't run without that language's
+# own Windows toolchain installed inside the prefix.
+WINE_NEEDS_WINDOWS_TOOLCHAIN = {"python": "Python", "node": "Node.js",
+                                "web": "Node.js", "java": "Java",
+                                "ruby": "Ruby", "php": "PHP"}
+
+
 def bridge_for(need: str) -> str:
     """How a module that needs `need` runs on this machine."""
     if need == "windows" and not IS_WINDOWS:
@@ -492,11 +503,60 @@ def is_elf_file(path: Path) -> bool:
     return _magic(path, 4) == b"\x7fELF"
 
 
-# Python imports that only make sense on Linux. Windows-only modules are left
-# to the user to mark: their imports are usually behind a platform guard (this
-# launcher's own win32 code is), so seeing one proves nothing.
+# Python imports that only make sense on Linux.
 LINUX_ONLY_IMPORTS = {"gi", "Xlib", "dbus", "evdev", "pyudev", "fcntl", "pty",
                       "termios", "grp", "pwd"}
+
+# Windows-only Python modules. Anywhere in a file they prove nothing — they
+# usually sit behind a platform guard (this launcher's own win32 code does) —
+# but imported at module level, outside any if/try, the program cannot start
+# anywhere else.
+WINDOWS_ONLY_IMPORTS = {"winreg", "winsound", "msvcrt", "_winapi", "win32api",
+                        "win32con", "win32gui", "win32process", "pythoncom",
+                        "pywintypes", "win32com", "wmi", "comtypes"}
+
+# Other languages say it just as plainly: Ruby aborts `unless
+# Gem.win_platform?` or loads win32ole; Java binds Windows DLLs through
+# FFM/JNA; a crate depends on the Windows API crates outside any
+# [target.'cfg(windows)'] table; a Dockerfile starts from a Windows image.
+_RUBY_WINDOWS = re.compile(
+    r"^(?:(?:abort|exit!?|raise)\b[^\n]*\bunless\s+Gem\.win_platform\?"
+    r"|require\s+['\"]win32ole['\"])", re.M)
+_JAVA_WINDOWS = re.compile(
+    r'(?:libraryLookup|Native\.load)\(\s*"(?:user32|kernel32|gdi32|dwmapi|'
+    r'advapi32|shell32|ole32|comctl32|winmm)(?:\.dll)?"', re.I)
+_DOCKER_WINDOWS = re.compile(
+    r"^\s*FROM\s+\S*(?:nanoserver|servercore|mcr\.microsoft\.com/windows)",
+    re.M | re.I)
+WINDOWS_CRATES = {"windows", "windows-sys", "winapi"}
+
+
+def module_level_imports(project_dir: Path) -> set[str]:
+    """Names the project's top-level .py files import unconditionally — at
+    module level, not inside an if, try or function."""
+    found: set[str] = set()
+    for py in project_dir.glob("*.py"):
+        try:
+            tree = ast.parse(py.read_text(encoding="utf-8", errors="replace"))
+        except (SyntaxError, OSError):
+            continue
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                found.update(a.name.split(".")[0] for a in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 \
+                    and node.module:
+                found.add(node.module.split(".")[0])
+    return found
+
+
+def _any_file_matches(files, pattern) -> bool:
+    for f in files:
+        try:
+            if pattern.search(f.read_text(encoding="utf-8", errors="replace")):
+                return True
+        except OSError:
+            continue
+    return False
 
 
 def detect_platform(proj: Path, runtime: str, entry: str) -> str:
@@ -531,6 +591,25 @@ def detect_platform(proj: Path, runtime: str, entry: str) -> str:
                 return "windows"
     if runtime == "python" and raw_imports(proj) & LINUX_ONLY_IMPORTS:
         return "linux"
+    if runtime == "python" and module_level_imports(proj) & WINDOWS_ONLY_IMPORTS:
+        return "windows"
+    if runtime == "ruby" and _any_file_matches(proj.glob("*.rb"), _RUBY_WINDOWS):
+        return "windows"
+    if runtime == "java" and _any_file_matches(proj.glob("src/**/*.java"),
+                                               _JAVA_WINDOWS):
+        return "windows"
+    if runtime == "docker" and _any_file_matches(proj.glob("Dockerfile*"),
+                                                 _DOCKER_WINDOWS):
+        return "windows"
+    if runtime == "binary" and (proj / "Cargo.toml").is_file():
+        import tomllib
+        try:
+            deps = tomllib.loads((proj / "Cargo.toml").read_text(
+                encoding="utf-8")).get("dependencies", {})
+        except (tomllib.TOMLDecodeError, OSError):
+            deps = {}
+        if WINDOWS_CRATES & set(deps):
+            return "windows"
     return ""
 
 
@@ -1016,6 +1095,7 @@ class BinaryRuntime(Runtime):
     id, label = "binary", "Native binary (Rust / Go / C/C++)"
     CARGO, GO = "(cargo build & run)", "(go build & run)"
     MAKE, CMAKE = "(make & run)", "(cmake build & run)"
+    WIN_TARGET = "x86_64-pc-windows-gnu"   # MinGW links it; no Visual Studio
 
     @classmethod
     def detect(cls, proj):
@@ -1088,6 +1168,15 @@ class BinaryRuntime(Runtime):
     def setup_steps(cls, cfg):
         proj = Path(cfg.project_dir)
         entry = cfg.entry
+        if entry == cls.CARGO and bridge_for(cfg.platform) == "wine":
+            # A Windows-only crate (windows-sys, ...) off Windows: build it
+            # for Windows with the MinGW linker, then Wine runs the .exe — as
+            # CsharpRuntime does for WinForms.
+            return [(f"rustup target add {cls.WIN_TARGET}", "rustup",
+                     ["target", "add", cls.WIN_TARGET], str(proj)),
+                    (f"cargo build --release --target {cls.WIN_TARGET}",
+                     "cargo", ["build", "--release", "--target",
+                               cls.WIN_TARGET], str(proj))]
         if entry == cls.CARGO:
             return [("cargo build --release", "cargo",
                      ["build", "--release"], str(proj))]
@@ -1114,6 +1203,9 @@ class BinaryRuntime(Runtime):
     @classmethod
     def launch(cls, cfg):
         proj = Path(cfg.project_dir)
+        if cfg.entry == cls.CARGO and bridge_for(cfg.platform) == "wine":
+            return LaunchSpec(str(proj / "target" / cls.WIN_TARGET / "release"
+                                  / (cls._cargo_bin(proj) + ".exe")), [], str(proj))
         if cfg.entry == cls.CARGO:
             name = cls._cargo_bin(proj) + (".exe" if builds_on_windows(cfg)
                                            else "")
@@ -2152,6 +2244,35 @@ def wine_family(tag: str) -> set[int]:
     return out
 
 
+def x_close_clients(pids: set[int]) -> int:
+    """Disconnect the X clients these processes hold: the stop that needs no
+    signal permission. A snap's AppArmor profile takes signals only from
+    senders it calls "unconfined" — a confined or sandboxed launcher is
+    refused — but a browser that loses its X connection exits all the same.
+    By XRes client, not by window: once its pane is gone a browser may hold
+    nothing but 10px helper windows. Returns how many clients were closed."""
+    if IS_WINDOWS or not HAS_X:
+        return 0
+    try:
+        from Xlib import display
+        d = display.Display()
+    except Exception as e:
+        logger.debug(f"X client close: no display: {e}")
+        return 0
+    n = 0
+    try:
+        for base, _mask, pid in _xres_client_pids(d):
+            if pid in pids and pid != os.getpid():
+                d.create_resource_object("window", base).kill_client()
+                n += 1
+        d.sync()
+    except Exception as e:
+        logger.debug(f"X client close failed: {e}")
+    finally:
+        d.close()
+    return n
+
+
 def in_sandboxed_env() -> bool:
     """Detect if running in Flatpak, Snap, or other sandboxed environment."""
     return bool(os.environ.get("FLATPAK_ID") or
@@ -3068,6 +3189,10 @@ def docker_hint(text: str) -> str | None:
                 "docker-users). Sign out and back in, then Restart.")
     if "unable to find user ContainerUser" in text or \
             "no matching manifest for linux" in text:
+        if not IS_WINDOWS:
+            return ("This is a Windows container image. Docker on Linux runs "
+                    "Linux containers only — it needs Docker Desktop on "
+                    "Windows, in Windows-containers mode.")
         return ("This is a Windows image and Docker is running Linux "
                 "containers: Docker Desktop's tray icon ▸ Switch to Windows "
                 "containers…, then Restart.")
@@ -3907,10 +4032,17 @@ class ModuleTab(QWidget):
                     "which isn't set up (no Linux distro installed). In an "
                     "administrator PowerShell run:"
                     "\n    wsl --install\nthen restart and Start again.")
-        if b == "wine" and self.cfg.runtime == "python":
-            return ("A Windows-only Python module can't run under Wine — Wine "
-                    "runs Windows programs (.exe), not Python projects. Set "
-                    "right-click ▸ Runs on ▸ Anywhere to try it natively.")
+        if b == "wine" and self.cfg.runtime == "docker":
+            return ("This module builds Windows containers. Those run only on "
+                    "Windows, in Docker Desktop's Windows-containers mode — "
+                    "Docker on Linux runs Linux containers.")
+        if b == "wine" and self.cfg.runtime in WINE_NEEDS_WINDOWS_TOOLCHAIN:
+            lang = WINE_NEEDS_WINDOWS_TOOLCHAIN[self.cfg.runtime]
+            return (f"This is a Windows-only {lang} program: it calls Windows "
+                    "itself. Wine runs Windows .exe programs, but a "
+                    f"{lang} one needs the Windows {lang} to run under it. Run "
+                    "it on Windows — or right-click ▸ Runs on ▸ Anywhere to "
+                    "try it here anyway.")
         return None
 
     def _bridge_steps(self) -> list:
@@ -4028,16 +4160,19 @@ class ModuleTab(QWidget):
             self._log(f"Unknown runtime: {self.cfg.runtime}")
             self._set_status("setup failed")
             return
-        spec = rt.launch(self.cfg)
+        def launch():
+            # Asked after setup, not before: what a build entry runs (the jar
+            # mvn makes, the newest program make leaves) doesn't exist until
+            # the build has run, and a fresh clone ran `java -jar (build)`.
+            spec = rt.launch(self.cfg)
+            self._launch_process(spec.program, spec.args, spec.workdir,
+                                 spec.extra_env)
         self._run_command_chain(
-            self._bridge_steps() + rt.setup_steps(self.cfg),
-            on_ok=lambda: self._launch_process(
-                spec.program, spec.args, spec.workdir, spec.extra_env))
+            self._bridge_steps() + rt.setup_steps(self.cfg), on_ok=launch)
 
     def _start_server(self, rt):
-        spec = rt.launch(self.cfg)
-
         def go():
+            spec = rt.launch(self.cfg)         # after setup, as above
             self._await_url = True
             self._url_tail = ""
             self._log("Starting server; will embed a browser window "
@@ -4628,7 +4763,10 @@ class ModuleTab(QWidget):
         # "denied" is e.g. an AppArmor-confined snap browser.
         stuck = [pid for pid in pids_with_arg(prof)
                  if kill_pid(pid, SIGKILL) == "denied"]
-        if stuck:
+        if stuck and x_close_clients(set(stuck)):
+            self._log("The browser refused signals (a confined snap); closed "
+                      "it through its X connection instead.")
+        elif stuck:
             self._log(f"Could not close {len(stuck)} browser process(es) "
                       f"{stuck} — not permitted to signal them. Close that "
                       "browser window by hand so it stops holding the port.")
