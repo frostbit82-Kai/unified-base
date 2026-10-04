@@ -132,7 +132,8 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QDialog,
                              QMessageBox, QPlainTextEdit, QPushButton,
                              QScrollArea, QSizePolicy, QSplitter,
                              QStackedWidget, QStyle, QTabBar,
-                             QToolButton, QVBoxLayout, QWidget)
+                             QToolButton, QVBoxLayout, QWIDGETSIZE_MAX,
+                             QWidget)
 
 BASE_DIR = Path(__file__).resolve().parent   # repo root (holds apps/, demo_module/)
 BLANK_DIR = BASE_DIR / "apps"                 # created empty tabs live here
@@ -2643,6 +2644,7 @@ class TerminalHost(QWidget):
 
     X11-only (python-xlib + xterm -into). On Windows, TerminalHost is
     winplat.ConsoleTerminal: an embedded conhost console, same idea."""
+    closed = pyqtSignal()       # the shell ended (`exit`), not shutdown()
 
     def __init__(self, cwd: str, parent=None, log=None):
         super().__init__(parent)
@@ -2662,6 +2664,7 @@ class TerminalHost(QWidget):
         force_x11_env(env)
         self.proc.setProcessEnvironment(env)
         self.proc.setWorkingDirectory(cwd)
+        self.proc.finished.connect(self.closed)
         self._heal = QTimer(self)
         self._heal.setInterval(400)
         self._heal.timeout.connect(self._heal_tick)
@@ -2770,6 +2773,7 @@ class TerminalHost(QWidget):
 
     def shutdown(self):
         self._heal.stop()
+        self.proc.finished.disconnect(self.closed)
         if self.proc.state() != QProcess.ProcessState.NotRunning:
             self.proc.terminate()
             if not self.proc.waitForFinished(1500):
@@ -3125,6 +3129,7 @@ class ModuleTab(QWidget):
         # _btn_wanted remembers which buttons the tab *would* show at full
         # width, so collapsing and re-expanding doesn't resurrect Install.
         self._btn_wanted: dict = {}
+        self._labels: dict = {}       # whole labels of buttons showing a glyph
         self._compact = None
         self.sampler = None           # set by UnifiedBase._add_tab
         self.meter_on = bool(cfg.show_meter)
@@ -3184,12 +3189,12 @@ class ModuleTab(QWidget):
                                   "into this tab")
         # Shown only when this runtime's toolchain is missing (see _offer_install).
         self.btn_install = QPushButton("⤓ Install")
-        self._show_btn(self.btn_install, False)
+        self._btn_wanted[self.btn_install] = False
         self.btn_install.setToolTip("Install the missing toolchain via a "
                                     "graphical password prompt (pkexec)")
         # Shown only after Chromium's sandbox abort (see _handle_stdout).
         self.btn_nosandbox = QPushButton("⚑ Retry without sandbox")
-        self._show_btn(self.btn_nosandbox, False)
+        self._btn_wanted[self.btn_nosandbox] = False
         self.btn_nosandbox.setToolTip("Add --no-sandbox to this module's "
                                       "startup args and start it again")
         self.chk_logs = QCheckBox("Logs")
@@ -3218,22 +3223,25 @@ class ModuleTab(QWidget):
         self.btn_install.clicked.connect(self._do_install)
         self.btn_nosandbox.clicked.connect(self._use_no_sandbox)
         self.chk_logs.toggled.connect(self._toggle_logs)
-        bar.addWidget(self.name_label, 1)
+        bar.addWidget(self.name_label)
         bar.addWidget(self.status_label)
         bar.addWidget(self.meter)
         bar.addStretch(1)
         self._bar_buttons = (self.btn_start, self.btn_stop, self.btn_restart,
                              self.btn_env, self.btn_embed, self.btn_install,
                              self.btn_nosandbox)
+        self._tips = {b: b.toolTip() for b in self._bar_buttons}
         for b in self._bar_buttons:
             bar.addWidget(b)
         bar.addWidget(self.chk_logs)
         bar.addWidget(self.btn_logmode)
         bar.addWidget(self.btn_more)
         root.addWidget(self.header)
+        # Their own width when there's room, clipped (down to 1px) when not.
+        # Ignored did the clipping too, but an Ignored label beside a
+        # stretch is given nothing at all: Status never showed.
         for lab in (self.name_label, self.status_label):
-            lab.setSizePolicy(QSizePolicy.Policy.Ignored,
-                              QSizePolicy.Policy.Preferred)
+            lab.setMinimumWidth(1)
 
         self.stack = QStackedWidget()
         self.panel = QWidget()
@@ -3367,28 +3375,82 @@ class ModuleTab(QWidget):
     def _show_btn(self, b: QPushButton, on: bool):
         """Set whether a header button is wanted, and show it if there's room."""
         self._btn_wanted[b] = on
-        b.setVisible(on and not self._compact)
+        self._apply_compact(force=True)
 
-    def _apply_compact(self):
-        """Fold the header down as the pane narrows.
+    def _apply_compact(self, force: bool = False):
+        """Fold the header down as the pane narrows: whole buttons, then
+        their glyphs alone (▶ ■ ↻ ⊞), then nothing but the ☰ menu.
 
         Tiling drags a pane to PANE_MIN_W (160px) but the full header needs
         ~640, so without this the buttons survive as unreadable 13px slivers.
+        Widths come from the buttons themselves: a fixed threshold fit one
+        style only, and Windows 11's 81px-minimum buttons were cut off.
         """
+        wanted = [b for b in self._bar_buttons if self._btn_wanted.get(b, True)]
+        glyphs = {b: g for b in wanted if (g := self._glyph(b))}
+        gap = self.header.layout().spacing()
+        m = self.layout().contentsMargins()
+        # ponytail: a flat 160 for name + status; the status text changes
+        # with every state, and the row must not reflow each time it does.
+        base = 160 + 3 * gap + m.left() + m.right() + \
+            (self.meter.minimumWidth() + gap if self.meter_on else 0)
+        full = base + sum(self._full_width(x) + gap for x in
+                          (*wanted, self.chk_logs, self.btn_logmode))
+        short = base + self.btn_more.sizeHint().width() + \
+            sum(self._glyph_width(b, g) + gap for b, g in glyphs.items())
         w = self.width()
-        tier = 0 if w >= 430 else (2 if w < 300 else 1)
-        if tier == self._compact:
+        tier = 0 if w >= full else 1 if w >= max(short, 300) else 2
+        if tier == self._compact and not force:
             return
         self._compact = tier
         for b in self._bar_buttons:
-            b.setVisible(self._btn_wanted.get(b, True) and tier == 0)
+            g = glyphs.get(b) if tier == 1 else None
+            if g:
+                self._labels.setdefault(b, b.text())
+                b.setText(g)
+                b.setToolTip(self._labels[b])
+                b.setFixedWidth(self._glyph_width(b, g))
+            elif b in self._labels:
+                b.setText(self._labels.pop(b))
+                b.setToolTip(self._tips[b])
+                b.setMinimumWidth(0)
+                b.setMaximumWidth(QWIDGETSIZE_MAX)
+            b.setVisible(b in wanted and (tier == 0 or bool(g)))
         self.chk_logs.setVisible(tier == 0)
         self.btn_logmode.setVisible(tier == 0)
         self.meter.setVisible(self.meter_on and tier != 2)
         self.btn_more.setVisible(tier > 0)
-        self.status_label.setVisible(tier < 2)
-        self.info_label.setVisible(tier < 2)
-        self.cmd_row.setVisible(tier < 2)
+        narrow = w < 300
+        self.status_label.setVisible(not narrow)
+        self.info_label.setVisible(not narrow)
+        self.cmd_row.setVisible(not narrow)
+
+    def _label(self, b) -> str:
+        """A header button's whole label, even while it shows a glyph."""
+        return self._labels.get(b, b.text())
+
+    def _glyph(self, b) -> str:
+        """"▶" for "▶ Start"; "" for a label that has none ("Rebuild Env")."""
+        first = self._label(b).split(" ", 1)[0]
+        return first if first and not first[0].isalnum() else ""
+
+    def _full_width(self, b) -> int:
+        """Width `b` wants with its whole label — measured with that label
+        put back for a moment, since the style decides (81px minimum on
+        Windows 11) and sizeHint only knows the text showing now."""
+        lab = self._labels.get(b)
+        if lab is None:
+            return b.sizeHint().width()
+        g = b.text()
+        b.setText(lab)
+        w = b.sizeHint().width()
+        b.setText(g)
+        return w
+
+    @staticmethod
+    def _glyph_width(b, g: str) -> int:
+        fm = b.fontMetrics()
+        return fm.horizontalAdvance(g) + fm.height()
 
     def _fill_more_menu(self):
         """Rebuilt on every open so it mirrors the buttons' current state."""
@@ -3397,7 +3459,7 @@ class ModuleTab(QWidget):
         for b in self._bar_buttons:
             if not self._btn_wanted.get(b, True):
                 continue
-            a = m.addAction(b.text())
+            a = m.addAction(self._label(b))
             a.setEnabled(b.isEnabled())
             a.triggered.connect(lambda _=False, btn=b: btn.click())
         m.addSeparator()
@@ -3542,7 +3604,7 @@ class ModuleTab(QWidget):
     def set_meter_enabled(self, master: bool):
         """Master switch (View menu) AND this module's own setting."""
         self.meter_on = bool(master and self.cfg.show_meter)
-        self.meter.setVisible(self.meter_on and self._compact != 2)
+        self._apply_compact(force=True)
         self._sync_meter()
 
     # -- toolchain install + mini terminal ----------------------------------
@@ -3695,9 +3757,19 @@ class ModuleTab(QWidget):
         if self.terminal is None:
             self.terminal = TerminalHost(str(self.cfg.project_dir),
                                          self.io_split, log=self._log)
+            self.terminal.closed.connect(self._terminal_closed)
             self.io_split.addWidget(self.terminal)
             self.io_split.setSizes([180, 260])
         self.terminal.setVisible(True)
+
+    def _terminal_closed(self):
+        """`exit` in the terminal folds it away, instead of leaving a blank
+        area behind; the toggle starts a fresh one."""
+        t, self.terminal = self.terminal, None
+        if t is not None:
+            t.shutdown()
+            t.deleteLater()
+        self.chk_term.setChecked(False)
 
     # -- cross-OS bridge -------------------------------------------------------
     @property
@@ -4211,8 +4283,12 @@ class ModuleTab(QWidget):
         p.readyReadStandardOutput.connect(lambda: self._handle_browser_output(p))
         p.finished.connect(self._on_browser_finished)
         p.errorOccurred.connect(lambda e: self._log(f"Browser error: {e}"))
+        # No sign-in, no sync: Edge signed the Windows account into each
+        # throwaway profile and announced it in a modal dialog, which (its
+        # window being our child) locked the whole launcher.
         args = [f"--app={url}", f"--user-data-dir={prof}", "--new-window",
-                "--no-first-run", "--no-default-browser-check"]
+                "--no-first-run", "--no-default-browser-check",
+                "--disable-sync", "--disable-features=msImplicitSignin"]
         # Force Chromium's window onto X11 (not a Wayland surface) so it has a
         # real X11 id to reparent. Without this the web tab never embeds on
         # Wayland — the browser opens but stays a floating Wayland window.
@@ -4699,6 +4775,10 @@ class UnifiedBase(QMainWindow):
         self.scroll.viewport().setAttribute(
             Qt.WidgetAttribute.WA_NativeWindow, True)
         self.scroll.viewport().installEventFilter(self)
+        if IS_WINDOWS:
+            self._owner_watch = QTimer(self)
+            self._owner_watch.timeout.connect(self._free_owner)
+            self._owner_watch.start(1000)
 
         self.content = QStackedWidget()
         self.empty_page = QWidget()
@@ -5313,6 +5393,11 @@ class UnifiedBase(QMainWindow):
         self._prev_visible = ()
         self._save_view_prefs()
         self._refresh_view()
+
+    def _free_owner(self):
+        """Windows: an embedded app's dialog must not lock the launcher."""
+        if QApplication.activeModalWidget() is None:
+            winplat.free_owner(int(self.winId()))
 
     def eventFilter(self, obj, event):
         if event.type() == QEvent.Type.MouseButtonPress:

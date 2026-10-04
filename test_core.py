@@ -444,7 +444,7 @@ def check_toolchain_preflight():
     assert cmd is None or "node" in cmd.lower(), cmd
 
 
-def _row_window(app, d, n):
+def _row_window(app, d, n, width=1200):
     """A shown UnifiedBase with `n` merge panes, its state in temp dir `d`,
     sized narrower than the panes need — the case both row checks care about."""
     sandbox = Path(d)
@@ -458,7 +458,7 @@ def _row_window(app, d, n):
                                         entry="main.py", runtime="python")
                        for i in range(n)])
     win = main.UnifiedBase()
-    win.resize(1200, 700)
+    win.resize(width, 700)
     win.show()
     win._set_merge_mode("row")
     for _ in range(6):
@@ -646,7 +646,7 @@ def check_compact_header():
     from PyQt6.QtCore import QPoint, Qt
     app = _app()
     with tempfile.TemporaryDirectory() as d:
-        win = _row_window(app, d, 3)
+        win = _row_window(app, d, 3, width=3000)   # room for 3 full rows
         panes = win.module_tabs
         # Nothing in the pane may set a minimum wider than a dragged pane, or
         # the drag below silently does nothing.
@@ -695,17 +695,62 @@ def check_compact_button_intent():
     # False for every child no matter what the compact tier did.
     assert not tab.btn_install.isVisibleTo(tab)   # hidden by _build_ui
     tab._show_btn(tab.btn_install, True)
-    tab._compact = 2                             # as if dragged narrow
+    tab.resize(200, 400)                         # as if dragged narrow
     tab._show_btn(tab.btn_nosandbox, True)
+    assert tab._compact == 2, tab._compact
     assert not tab.btn_nosandbox.isVisibleTo(tab), "compact pane showed one"
-    tab._compact = None                          # force _apply_compact to run
-    tab.resize(900, 400)
+    tab.resize(1400, 400)
     tab._apply_compact()
     assert tab._compact == 0, tab._compact
     assert tab.btn_install.isVisibleTo(tab), "wanted button lost on expand"
     assert tab.btn_nosandbox.isVisibleTo(tab)
     assert tab.cmd_row.isVisibleTo(tab)
     tab.shutdown()
+
+
+def check_header_never_clips():
+    """Whatever the header shows fits, at any pane width and font: whole
+    buttons at their full width, glyph buttons wide enough for the glyph,
+    nothing past the right edge. A fixed 430px fold point cut labels off
+    with Windows 11's 81px-minimum buttons at 125%."""
+    from PyQt6.QtWidgets import QWidget
+    app = _app()
+    host = QWidget()
+    host.resize(1600, 500)
+    cfg = main.ModuleConfig(name="m", project_dir=tempfile.gettempdir(),
+                            entry="main.py")
+    tab = main.ModuleTab(cfg, host)
+    f = tab.font()
+    f.setPointSizeF(f.pointSizeF() * 1.4)       # wider than any default
+    tab.setFont(f)
+    host.show()
+    tiers = {}
+    for w in range(160, 1600, 40):
+        tab.setGeometry(0, 0, w, 400)
+        app.processEvents()
+        tiers.setdefault(tab._compact, w)
+        shown = [x for x in tab.header.children()
+                 if isinstance(x, QWidget) and x.isVisible()]
+        assert max(x.geometry().right() for x in shown) < tab.header.width(), \
+            (w, [(x.objectName() or type(x).__name__, x.geometry().right())
+                 for x in shown])
+        for b in tab._bar_buttons:
+            if b.isVisible():
+                need = b.sizeHint().width() if tab._compact == 0 else \
+                    b.fontMetrics().horizontalAdvance(b.text())
+                assert b.width() >= need, (w, b.text(), b.width(), need)
+    assert set(tiers) == {0, 1, 2}, tiers
+    assert tab._compact == 0 and tab.btn_start.text() == "▶ Start"
+    # Room to spare: Status reads in full (an Ignored label got 0px).
+    st = tab.status_label
+    assert st.width() >= st.sizeHint().width(), (st.width(), st.sizeHint())
+    tab.setGeometry(0, 0, tiers[1], 400)     # back to glyphs: labels kept
+    app.processEvents()
+    assert tab._compact == 1 and tab.btn_start.text() == "▶", tab._compact
+    tab._fill_more_menu()
+    assert "▶ Start" in [a.text() for a in tab.menu_more.actions()]
+    tab.shutdown()
+    host.close()
 
 
 def check_module_log_file():
@@ -1234,7 +1279,7 @@ def check_wsl_display_env():
         main.wsl_x_display = keep
 
 
-def _win32_window(style):
+def _win32_window(style, owner=None):
     """A real top-level HWND (offscreen Qt widgets have none)."""
     import ctypes
     import winplat
@@ -1243,7 +1288,7 @@ def _win32_window(style):
     cw.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_wchar_p,
                    ctypes.c_uint32] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4
     return int(cw(0, "STATIC", "ub probe", style, 0, 0, 80, 80,
-                  None, None, None, None))
+                  owner, None, None, None))
 
 
 def check_frame_restrip():
@@ -1260,6 +1305,40 @@ def check_frame_restrip():
     w.Win32EmbedHost._strip(stub)
     assert not w.Win32EmbedHost._framed(stub)
     w.user32.DestroyWindow(w.HWND(wid))
+
+
+def check_browser_crop_settles():
+    """A browser's caption strip is cropped by its page insets; the 1px
+    rounding flip of the bottom inset must not resize it forever, while a
+    real change (DPI 125% -> 100%: a shorter caption) still lands."""
+    if not ON_WINDOWS:
+        return
+    import winplat as w
+    crop = w.settle_crop((0, 0, 0, 0), (8, 36, 7, 7))
+    assert crop == (8, 36, 7, 7), crop
+    seen = {crop}
+    for ins in [(8, 36, 7, 8), (8, 36, 7, 7)] * 3:     # the flip-flop
+        crop = w.settle_crop(crop, ins)
+        seen.add(crop)
+    assert crop == (8, 36, 7, 8) and len(seen) == 2, seen
+    assert w.settle_crop(crop, (8, 29, 7, 8)) == (8, 29, 7, 8)
+
+
+def check_free_owner():
+    """A launcher locked by a dialog that is gone (Edge killed mid-dialog)
+    is enabled again; one locked by a dialog still up is left alone."""
+    if not ON_WINDOWS:
+        return
+    import winplat as w
+    top = _win32_window(w.WS_POPUP)
+    w.EnableWindow(top, False)
+    dlg = _win32_window(w.WS_POPUP | 0x10000000, owner=top)   # WS_VISIBLE
+    w.free_owner(top)
+    assert not w.IsWindowEnabled(top), "enabled under a live dialog"
+    w.user32.DestroyWindow(w.HWND(dlg))
+    w.free_owner(top)
+    assert w.IsWindowEnabled(top), "still locked with no dialog left"
+    w.user32.DestroyWindow(w.HWND(top))
 
 
 def check_embed_refused():
@@ -1723,6 +1802,8 @@ if __name__ == "__main__":
                check_shell_command,
                check_row_drag_slack, check_tab_reveals_pane,
                check_compact_header, check_compact_button_intent,
+               check_header_never_clips, check_browser_crop_settles,
+               check_free_owner,
                check_module_log_file, check_env_var_editor,
                check_shortcuts, check_geometry_roundtrip,
                check_proc_table, check_children_walk, check_sampler,

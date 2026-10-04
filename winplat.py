@@ -94,6 +94,9 @@ GetWindowThreadProcessId = _proto(user32, "GetWindowThreadProcessId",
 IsWindow = _proto(user32, "IsWindow", wintypes.BOOL, HWND)
 IsWindowVisible = _proto(user32, "IsWindowVisible", wintypes.BOOL, HWND)
 IsIconic = _proto(user32, "IsIconic", wintypes.BOOL, HWND)
+IsWindowEnabled = _proto(user32, "IsWindowEnabled", wintypes.BOOL, HWND)
+EnableWindow = _proto(user32, "EnableWindow", wintypes.BOOL, HWND,
+                      wintypes.BOOL)
 IsChild = _proto(user32, "IsChild", wintypes.BOOL, HWND, HWND)
 GetWindowRect = _proto(user32, "GetWindowRect", wintypes.BOOL, HWND,
                        ctypes.POINTER(wintypes.RECT))
@@ -190,6 +193,33 @@ def window_title(hwnd: int) -> str:
     buf = ctypes.create_unicode_buffer(512)
     GetWindowTextW(hwnd, buf, 512)
     return buf.value
+
+
+# Browsers whose --app window draws its own caption strip and frame inside
+# the window, where no style change reaches. Not Electron: its menu bar is
+# drawn the same way, and is wanted.
+BROWSER_EXES = {"msedge.exe", "chrome.exe", "chromium.exe", "brave.exe"}
+
+
+def page_insets(hwnd: int) -> tuple[int, int, int, int] | None:
+    """(left, top, right, bottom) between a Chromium window's edges and its
+    page (the Chrome_RenderWidgetHostHWND child); None before the page
+    exists."""
+    for k in child_windows(hwnd):
+        if window_class(k) == "Chrome_RenderWidgetHostHWND" and                 _h(GetAncestor(k, GA_PARENT)) == hwnd:
+            w, p = wintypes.RECT(), wintypes.RECT()
+            GetWindowRect(hwnd, ctypes.byref(w))
+            GetWindowRect(k, ctypes.byref(p))
+            return (p.left - w.left, p.top - w.top,
+                    w.right - p.right, w.bottom - p.bottom)
+    return None
+
+
+def settle_crop(crop: tuple, ins: tuple) -> tuple:
+    """The crop to apply for measured page insets `ins`. A 1-2px change only
+    ever grows it: Chromium rounds its layout at 125%, so the bottom inset
+    flips 7 <-> 8 with each resize, and following it resized forever."""
+    return tuple(v if abs(v - c) > 2 else max(v, c) for v, c in zip(ins, crop))
 
 
 def is_app_window(hwnd: int) -> bool:
@@ -546,6 +576,27 @@ def take_keyboard(top: int) -> None:
             SetFocus(top)
 
 
+def free_owner(top: int) -> None:
+    """Keep an embedded app's modal dialog from locking the launcher for good.
+
+    An embedded window's dialogs are owned by our top-level window (it is
+    their root now), so a modal one disables the launcher itself. That is
+    right while the dialog is up — but Edge showed one minimized, nothing to
+    click, and an app that dies mid-dialog never enables us again. So: a
+    minimized dialog of another process is restored, and a launcher that is
+    disabled with no window of its own left is enabled. The caller makes
+    sure no Qt modal dialog is open."""
+    if IsWindowEnabled(top):
+        return
+    owned = [h for h in top_windows()
+             if _h(GetWindow(h, GW_OWNER)) == top and IsWindowVisible(h)]
+    for h in owned:
+        if IsIconic(h) and window_pid(h) != os.getpid():
+            ShowWindow(h, SW_RESTORE)
+    if not owned:
+        EnableWindow(top, True)
+
+
 # --- embedding -----------------------------------------------------------------------
 class Win32EmbedHost(QWidget):
     """Hosts another process's top-level window as a child of this widget.
@@ -572,6 +623,7 @@ class Win32EmbedHost(QWidget):
         self._last_focus = 0
         self._watched = None
         self._remap = not self.isVisible()
+        self._crop = (0, 0, 0, 0)    # how far the child hangs past each edge
         err = self._attach()
         if err:
             # SetParent refused, e.g. access denied: WSLg's msrdc.exe windows
@@ -599,11 +651,14 @@ class Win32EmbedHost(QWidget):
         self._repaint.setInterval(33)
         self._repaint.timeout.connect(
             lambda: InvalidateRect(self.child_wid, None, False))
-        self._xserver = _exe_name(window_pid(self.child_wid), {}) in X_SERVERS
+        exe = _exe_name(window_pid(self.child_wid), {})
+        self._xserver = exe in X_SERVERS
         if self._xserver:
             self._focus_poll.timeout.connect(self._sync_xserver)
             self._repaint.start()
             taskbar_drop(self.child_wid)
+        if exe in BROWSER_EXES:
+            self._focus_poll.timeout.connect(self._sync_crop)
         self._focus_poll.start()
 
     def _host_wid(self) -> int:
@@ -630,7 +685,8 @@ class Win32EmbedHost(QWidget):
         # scrolls its view down to the cursor and never scrolls back up, so
         # the start of the prompt stayed hidden above the top edge.
         keep = 0 if self.isVisible() else SWP_NOSIZE
-        SetWindowPos(child, None, 0, 0, w, h,
+        x, y, w, h = self._child_rect()
+        SetWindowPos(child, None, x, y, w, h,
                      SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
                      | SWP_NOACTIVATE | keep)
         return 0
@@ -714,10 +770,27 @@ class Win32EmbedHost(QWidget):
             return
         self.reattach_if_needed()
 
+    def _child_rect(self) -> tuple[int, int, int, int]:
+        w, h = self._pixel_size()
+        left, top, right, bottom = self._crop
+        return -left, -top, w + left + right, h + top + bottom
+
     def _resize_child(self):
         if self.child_alive():
-            w, h = self._pixel_size()
-            MoveWindow(self.child_wid, 0, 0, w, h, True)
+            MoveWindow(self.child_wid, *self._child_rect(), True)
+
+    def _sync_crop(self):
+        """Hang a browser window past our edges by its page's insets, so its
+        own caption strip and frame fall outside the pane. Re-measured on
+        the focus poll: the strip is drawn after the window first maps, and
+        its height follows the DPI."""
+        ins = page_insets(self.child_wid) if self.child_alive() else None
+        if not ins or not all(0 <= v < 200 for v in ins):
+            return
+        crop = settle_crop(self._crop, ins)
+        if crop != self._crop:
+            self._crop = crop
+            self._resize_child()
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -845,6 +918,7 @@ class ConsoleTerminal(QWidget):
     console window is then hosted with Win32EmbedHost like any module, so
     vim, ssh and interactive prompts all work.
     """
+    closed = pyqtSignal()       # the console went away (`exit`)
 
     def __init__(self, cwd: str, parent=None, log=None):
         super().__init__(parent)
@@ -862,17 +936,19 @@ class ConsoleTerminal(QWidget):
         self._find = QTimer(self)
         self._find.setInterval(250)
         self._find.timeout.connect(self._find_console)
+        self._watch = QTimer(self)
+        self._watch.setInterval(500)
+        self._watch.timeout.connect(self._check_alive)
 
     def showEvent(self, event):
         super().showEvent(event)
-        if self.host is not None and not self.host.child_alive():
-            # `exit` closed the console; showing the terminal again starts
-            # a fresh one.
-            self.host.deleteLater()
-            self.host = None
-            self.pid = 0
         if self.pid == 0:
             self._start()
+
+    def _check_alive(self):
+        if self.host is not None and not self.host.child_alive():
+            self._watch.stop()
+            self.closed.emit()
 
     def _start(self):
         shell = os.environ.get("COMSPEC", "cmd.exe")
@@ -914,6 +990,7 @@ class ConsoleTerminal(QWidget):
                 self._wait.hide()
                 self.host = Win32EmbedHost(h, self, log=self._log)
                 self._lay.addWidget(self.host)
+                self._watch.start()
                 return
         if self._tries > 60:                      # ~15 s
             self._find.stop()
@@ -924,6 +1001,7 @@ class ConsoleTerminal(QWidget):
 
     def shutdown(self):
         self._find.stop()
+        self._watch.stop()
         if self.pid:
             kill_process_tree(self.pid, 9)
             self.pid = 0
