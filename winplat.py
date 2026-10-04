@@ -56,7 +56,7 @@ WS_EX_NOPARENTNOTIFY = 0x00000004
 WS_EX_TOPMOST = 0x00000008
 SWP_NOSIZE, SWP_NOMOVE, SWP_NOZORDER = 0x0001, 0x0002, 0x0004
 SWP_NOACTIVATE, SWP_FRAMECHANGED, SWP_SHOWWINDOW = 0x0010, 0x0020, 0x0040
-SW_HIDE, SW_SHOW, SW_RESTORE = 0, 5, 9
+SW_HIDE, SW_SHOW, SW_SHOWNA, SW_RESTORE = 0, 5, 8, 9
 GW_OWNER = 4
 GA_PARENT = 1
 WM_MOVE = 0x0003
@@ -527,6 +527,7 @@ class Win32EmbedHost(QWidget):
         self._exstyle = _signed(_GetLong(self.child_wid, GWL_EXSTYLE))
         self._last_focus = 0
         self._watched = None
+        self._remap = not self.isVisible()
         err = self._attach()
         if err:
             # SetParent refused, e.g. access denied: WSLg's msrdc.exe windows
@@ -680,6 +681,18 @@ class Win32EmbedHost(QWidget):
         self._watch_surface()
         self.reattach_if_needed()
         self._resize_child()
+        if self._remap:
+            # Adopted while this widget was still hidden: Tk withdraws its
+            # content when parented into a hidden window and maps it again
+            # only on a show of its own — a Tk app embedded blank. Next
+            # turn: showEvent comes before Qt really shows our window.
+            self._remap = False
+            QTimer.singleShot(0, self._show_again)
+
+    def _show_again(self):
+        if self.child_alive():
+            ShowWindow(self.child_wid, SW_HIDE)
+            ShowWindow(self.child_wid, SW_SHOWNA)
 
     def nativeEvent(self, event_type, message):
         try:

@@ -6072,6 +6072,12 @@ def selftest() -> int:
                 time.sleep(0.05)
             row("embed the window", host.verify(),
                 f"0x{wid:x} parented under the host")
+            if IS_WINDOWS:
+                # Parented isn't drawing: Tk once hid all its content here.
+                kids = winplat.child_windows(wid)
+                row("embedded content shown",
+                    any(winplat.IsWindowVisible(k) for k in kids),
+                    f"{len(kids)} child window(s)")
             host._resize_child()
             row("child still alive after resize", host.child_alive())
             host.detach()
