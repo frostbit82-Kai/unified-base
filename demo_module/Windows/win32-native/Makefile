@@ -8,7 +8,11 @@ else
 CC = x86_64-w64-mingw32-gcc
 endif
 
-app.exe: main.c
+# Prerequisites only while the exe is missing: git checks files out in any
+# order, so a fresh clone often has main.c newer than the shipped exe, and
+# a rebuild (never byte-identical) would dirty the tree. After editing the
+# source: make -B.
+app.exe: $(if $(wildcard app.exe),,main.c)
 	$(CC) -O2 -s -municode -mwindows -o $@ main.c -lgdi32 -luser32 -lcomctl32
 
 clean:

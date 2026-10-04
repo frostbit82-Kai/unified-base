@@ -6,6 +6,7 @@ __pycache__/
 # Build output. Every demo rebuilds its own on Start, for the OS it runs on —
 # a Linux-built node_modules/target/bin is wrong on Windows and vice versa.
 node_modules/
+vendor/
 target/
 bin/
 obj/

@@ -7,7 +7,11 @@
 CC = zig cc -target x86_64-windows-gnu
 LIBS = -lgdi32 -luser32 -lcomctl32 -lcomdlg32
 
-paint.exe: main.c app.rc app.manifest
+# Prerequisites only while the exe is missing: git checks files out in any
+# order, so a fresh clone often has main.c newer than the shipped exe, and
+# a rebuild (never byte-identical) would dirty the tree. After editing the
+# source: make -B.
+paint.exe: $(if $(wildcard paint.exe),,main.c app.rc app.manifest)
 	$(if $(wildcard $@),-)$(CC) -O2 -s -Wl,--subsystem,windows -o $@ main.c app.rc $(LIBS)
 
 clean:

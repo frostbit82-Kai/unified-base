@@ -24,10 +24,13 @@ private): `~/Projects/Unified Base` on Linux, `D:\Projects\Unified Base` (the
 way is how work gets stranded.
 
 **No build output in git.** Each demo rebuilds `node_modules`, `target`,
-`bin`/`obj` for the OS it runs on (see `.gitignore`). The prebuilt
+`bin`/`obj`, composer's `vendor` for the OS it runs on (see `.gitignore`). The prebuilt
 `Windows/win32-native/app.exe`, `Windows/c-paint/paint.exe`,
 `Windows/c-sysmon/sysmon.exe` and `Linux/x11-native/x11-native` are the
-deliberate exceptions: C needs a compiler most machines lack.
+deliberate exceptions: C needs a compiler most machines lack. Their
+Makefiles rebuild them only when missing (`make -B` after editing the
+source): a checkout often leaves main.c newer, and a rebuild is never
+byte-identical, so it dirtied the tree.
 
 **Installers come later (Linux and Windows).** Keep that possible: no
 personal paths in defaults, and nothing new that must write next to the code.
