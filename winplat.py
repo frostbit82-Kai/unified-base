@@ -280,6 +280,36 @@ def wsl_ready() -> bool:
 X_SERVERS = ("vcxsrv.exe", "x410.exe", "xming.exe")
 
 
+class _GUID(ctypes.Structure):
+    _fields_ = [("a", ctypes.c_ulong), ("b", ctypes.c_ushort),
+                ("c", ctypes.c_ushort), ("d", ctypes.c_ubyte * 8)]
+
+
+def taskbar_drop(hwnd: int) -> None:
+    """Remove an embedded window's taskbar button. VcXsrv adds one with
+    ITaskbarList::AddTab when an X window maps, and it outlived the window
+    becoming our child: a second button per embedded Linux app."""
+    try:
+        ole32 = ctypes.OleDLL("ole32")
+        clsid, iid, p = _GUID(), _GUID(), ctypes.c_void_p()
+        ole32.CLSIDFromString("{56FDF344-FD6D-11d0-958A-006097C9A090}",
+                              ctypes.byref(clsid))
+        ole32.CLSIDFromString("{56FDF342-FD6D-11d0-958A-006097C9A090}",
+                              ctypes.byref(iid))
+        ole32.CoCreateInstance(ctypes.byref(clsid), None, 1, ctypes.byref(iid),
+                               ctypes.byref(p))
+        vt = ctypes.cast(p, ctypes.POINTER(ctypes.POINTER(ctypes.c_void_p)))[0]
+
+        def call(i, *args):    # ITaskbarList vtable: 2 Release, 3 HrInit, 5 DeleteTab
+            return ctypes.WINFUNCTYPE(ctypes.c_long, ctypes.c_void_p,
+                                      *[type(a) for a in args])(vt[i])(p, *args)
+        call(3)
+        call(5, HWND(hwnd))
+        call(2)
+    except OSError as e:                  # cosmetic: never break the embed
+        logger.debug(f"taskbar_drop failed: {e}")
+
+
 def wsl_x_display() -> str | None:
     """DISPLAY that puts a Linux module's windows on a Windows X server.
 
@@ -555,9 +585,11 @@ class Win32EmbedHost(QWidget):
         self._repaint.setInterval(33)
         self._repaint.timeout.connect(
             lambda: InvalidateRect(self.child_wid, None, False))
-        if _exe_name(window_pid(self.child_wid), {}) in X_SERVERS:
+        self._xserver = _exe_name(window_pid(self.child_wid), {}) in X_SERVERS
+        if self._xserver:
             self._focus_poll.timeout.connect(self._sync_xserver)
             self._repaint.start()
+            taskbar_drop(self.child_wid)
         self._focus_poll.start()
 
     def _host_wid(self) -> int:
@@ -657,6 +689,8 @@ class Win32EmbedHost(QWidget):
             SetWindowPos(self.child_wid, None, 0, 0, 0, 0,
                          SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
                          | SWP_FRAMECHANGED | SWP_NOACTIVATE)
+            if self._xserver:
+                taskbar_drop(self.child_wid)   # added back with the frame
         return True
 
     def _heal_tick(self):
