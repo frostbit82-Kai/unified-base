@@ -478,6 +478,10 @@ def check_free_port():
     probe = _s.socket(); probe.bind(("127.0.0.1", 0))
     port = probe.getsockname()[1]; probe.close()
     assert main.free_port(port) == port
+    # Handed out a moment ago, not bound yet (a layout starting two servers):
+    # the second caller gets another port.
+    again = main.free_port(port)
+    assert again != port and again > 0, again
     # Preferred port held -> a different, usable port.
     held = _s.socket(); held.bind(("127.0.0.1", 0))
     busy = held.getsockname()[1]
@@ -2108,10 +2112,14 @@ def check_wine_runtimes():
                 (Path(d) / "pfx").mkdir(exist_ok=True)
                 (Path(d) / "pfx" / "system.reg").write_text("")
                 steps = tab._toolchain_steps()
-                fetch = [s for s in steps if main.WINE_FETCH in s[2]]
-                assert fetch and fetch[0][2][2] == tc["url"], (rt, steps)
-                assert fetch[0][2][4] == tc["sha256"]
-                inst = [s for s in steps if s[1] == (main.wine_program() or "wine")]
+                # each runs under the toolchain's lock: [-c, WINE_ONCE, lock,
+                # marker, program, *args]
+                assert all(s[2][1] == main.WINE_ONCE for s in steps), steps
+                fetch = [s[2][4:] for s in steps if main.WINE_FETCH in s[2]]
+                assert fetch and fetch[0][3] == tc["url"], (rt, steps)
+                assert fetch[0][5] == tc["sha256"]
+                inst = [s for s in steps
+                        if s[2][4] == (main.wine_program() or "wine")]
                 assert bool(inst) == bool(tc.get("install")), (rt, steps)
                 if inst:       # the installer gets C:\ub\<dir> as its target
                     assert any("C:\\ub\\" + tc["dir"] in a for a in inst[0][2])
@@ -2127,6 +2135,19 @@ def check_wine_runtimes():
                 tab.shutdown()
         finally:
             main.APP_DIR = keep
+    # The lock wrapper runs the step, or skips it once its marker exists.
+    with tempfile.TemporaryDirectory() as d:
+        mark = Path(d) / "tool.exe"
+        once = lambda: subprocess.run(
+            [sys.executable, "-c", main.WINE_ONCE, str(Path(d) / "x.lock"),
+             str(mark), "sh", "-c", 'echo ran > "$0"; exit 3', str(mark)],
+            capture_output=True, text=True, timeout=30)
+        r = once()
+        assert r.returncode == 3 and mark.read_text() == "ran\n", r
+        mark.write_text("installed")
+        r = once()
+        assert r.returncode == 0 and mark.read_text() == "installed", r
+        assert "Already done" in r.stdout, r
 
 
 def check_wine_fetch():

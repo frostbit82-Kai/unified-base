@@ -72,8 +72,7 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Linux: 73 pass (before the
-  Windows bug pass below, which added 5 portable checks). Real Windows: 68
+- `python test_core.py` (inside `.venv`). Linux: 78 pass. Real Windows: 68
   pass, 10 skipped (2026-10-04 evening).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
@@ -203,6 +202,11 @@ x11-native embed; docker, docker-multistage print); the rest now say which
   it by pid, not by the Linux-window path (it never matched). And Stop's
   `docker rm` must go through the bridge — WSL's docker, not Windows'.
 
+- Loading a layout starts every module in one go. Two PHP dev servers both
+  got :8000 (`free_port` now skips ports it handed out in the last 30 s;
+  `Runtime.serves()` answers without reserving one), and two tabs of one
+  Windows language raced its toolchain download/installer (`WINE_ONCE`:
+  per-toolchain lock, skip once the tool exists). Test simultaneous starts.
 - Windows toolchains under Wine: run them by their `C:\ub\…` path, never
   Z: — from `Z:\home\…\.unified_base\…` Python's Tcl can't find init.tcl.
   RubyInstaller's UCRT Ruby aborts "unexpected ucrtbase.dll" on Wine's

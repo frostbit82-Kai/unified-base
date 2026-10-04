@@ -348,16 +348,26 @@ def free_port(preferred: int) -> int:
     projects. Preferred-first keeps the familiar URL for the common case of
     one server at a time.
     """
-    # ponytail: bind-and-release, so the port can in principle be taken in the
-    # gap before the server binds it. The retry for that is the Start button.
+    # ponytail: bind-and-release, so another program can in principle take the
+    # port in the gap before the server binds it. The retry is Start. Our own
+    # servers can't: a port handed out in the last 30 s is skipped (a layout
+    # starts every module in one go, and two PHP servers both got :8000).
+    now = time.monotonic()
     for port in (preferred, 0):
+        if port and now - _PORTS_GIVEN.get(port, -1e9) < 30:
+            continue
         try:
             with socket.socket() as s:
                 s.bind(("127.0.0.1", port))
-                return s.getsockname()[1]
+                port = s.getsockname()[1]
+                _PORTS_GIVEN[port] = now
+                return port
         except OSError:
             continue
     return preferred
+
+
+_PORTS_GIVEN: dict[int, float] = {}     # port -> when free_port handed it out
 
 
 def _read_json(path: Path) -> dict:
@@ -567,6 +577,28 @@ if len(sys.argv) > 4:
             with z.open(m) as src, open(path, "wb") as dst:
                 shutil.copyfileobj(src, dst)
     print("Unpacked into " + out, flush=True)
+"""
+
+
+# Runs one toolchain step under that toolchain's lock, unless `marker` (what
+# the step makes) appeared meanwhile: two tabs of one Windows language started
+# together (a layout) raced the same download, and would run one installer
+# twice into C:\ub\<dir>, rewriting DLLs the first tab's program has loaded.
+# Linux only, as is everything Wine.
+WINE_ONCE = r"""
+import fcntl, os, subprocess, sys
+lock, marker, cmd = sys.argv[1], sys.argv[2], sys.argv[3:]
+with open(lock, "w") as f:
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print("Waiting for another module setting up the same toolchain...",
+              flush=True)
+        fcntl.flock(f, fcntl.LOCK_EX)
+    if os.path.exists(marker):
+        print("Already done by another module.", flush=True)
+        sys.exit(0)
+    sys.exit(subprocess.call(cmd))
 """
 
 
@@ -964,6 +996,12 @@ class Runtime:
     @classmethod
     def launch(cls, cfg) -> "LaunchSpec":
         raise NotImplementedError
+
+    @classmethod
+    def serves(cls, cfg) -> bool:
+        """Whether launch() serves a URL — asked before setup, so a runtime
+        whose launch() has side effects (PHP reserves a port) overrides it."""
+        return cls.launch(cfg).serves
 
 
 @dataclass
@@ -1601,6 +1639,10 @@ class PhpRuntime(Runtime):
                               str(proj), serves=True)
         entry = cfg.entry or "index.php"
         return LaunchSpec("php", [entry], str(proj))
+
+    @classmethod
+    def serves(cls, cfg):
+        return cfg.entry == "composer (dev server)"
 
 
 # Bumped per `docker run`, so two tabs of one image get different container
@@ -4243,30 +4285,38 @@ class ModuleTab(QWidget):
         cache = APP_DIR / "downloads"
         cache.mkdir(parents=True, exist_ok=True)
         wenv = {"WINEPREFIX": str(self._prefix()), "WINEDEBUG": "-all"}
+        lock = str(cache / f"{tc['dir']}.lock")
+
+        def once(marker, label, prog, args, *rest):
+            return (label, sys.executable,
+                    ["-c", WINE_ONCE, lock, str(marker), prog] + args,
+                    str(cache), *rest)
         steps = []
-        if not self._wine_tool().is_file():
+        tool = self._wine_tool()
+        if not tool.is_file():
             file = cache / unquote(tc["url"].rsplit("/", 1)[-1])
-            steps.append((f"downloading {tc['label']} ({tc['mb']} MB, first "
-                          "run)", sys.executable,
-                          ["-c", WINE_FETCH, tc["url"], str(file), tc["sha256"]]
-                          + ([] if tc.get("install") else [str(folder)]),
-                          str(cache)))
+            steps.append(once(
+                tool, f"downloading {tc['label']} ({tc['mb']} MB, first run)",
+                sys.executable,
+                ["-c", WINE_FETCH, tc["url"], str(file), tc["sha256"]]
+                + ([] if tc.get("install") else [str(folder)])))
             if tc.get("install"):
                 win_dir = "C:\\ub\\" + tc["dir"]
-                steps.append((f"installing {tc['label']} into Wine",
-                              wine_program() or "wine",
-                              [wine_path(file)] + [a.replace("{dir}", win_dir)
-                                                   for a in tc["install"]],
-                              str(cache), wenv))
+                steps.append(once(
+                    tool, f"installing {tc['label']} into Wine",
+                    wine_program() or "wine",
+                    [wine_path(file)] + [a.replace("{dir}", win_dir)
+                                         for a in tc["install"]], wenv))
         for x in tc.get("extras", ()):
-            if (folder / x["to"] / Path(x["member"]).name).is_file():
+            dll = folder / x["to"] / Path(x["member"]).name
+            if dll.is_file():
                 continue
             file = cache / unquote(x["url"].rsplit("/", 1)[-1])
-            steps.append((f"downloading {Path(x['member']).name} for "
-                          f"{tc['label']} ({x['mb']} MB)",
-                          sys.executable,
-                          ["-c", WINE_FETCH, x["url"], str(file), x["sha256"],
-                           str(folder / x["to"]), x["member"]], str(cache)))
+            steps.append(once(
+                dll, f"downloading {dll.name} for {tc['label']} ({x['mb']} MB)",
+                sys.executable,
+                ["-c", WINE_FETCH, x["url"], str(file), x["sha256"],
+                 str(folder / x["to"]), x["member"]]))
         return steps
 
     def _bridge_steps(self) -> list:
@@ -4364,7 +4414,7 @@ class ModuleTab(QWidget):
         rt = RUNTIMES.get(self.cfg.runtime)
         # PHP's dev server serves a URL exactly like a JS dev server does; it
         # never opens a window, so without this the tab just sat blank.
-        if rt is not None and rt.launch(self.cfg).serves:
+        if rt is not None and rt.serves(self.cfg):
             self._start_server(rt)
         else:
             self._start_generic(proj)
@@ -4652,8 +4702,9 @@ class ModuleTab(QWidget):
                 self._set_status("setup failed")
 
         p.finished.connect(done)
-        p.errorOccurred.connect(
-            lambda e: self._log(f"Setup step '{prog}' failed to run: {e}"))
+        p.errorOccurred.connect(          # Stop's kill reads as Crashed: not a failure
+            lambda e: self._cancel_setup or
+            self._log(f"Setup step '{prog}' failed to run: {e}"))
         self.setup_proc = p
         start_qprocess(p, prog, args)
         self._set_status(self.status)  # refresh button states
