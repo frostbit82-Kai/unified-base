@@ -1632,8 +1632,11 @@ def check_program_files():
 
 
 def check_proc_text():
-    """Child output: UTF-8, else the ANSI code page; CRLF folded to LF."""
+    """Child output: UTF-8, else the ANSI code page; CRLF folded to LF;
+    terminal escapes (colours, clear-screen, titles) stripped."""
     assert main.proc_text(b"a\r\nb\r\n") == "a\nb\n"
+    assert main.proc_text(b"\x1b[2J\x1b[H\x1b[1;36mprimes\x1b[0m: 9592\x1b[?25l") == "primes: 9592"
+    assert main.proc_text(b"\x1b]0;title\x07ok \x1b(Bx") == "ok x"
     assert main.proc_text("café\n".encode()) == "café\n"
     keep = main._OUTPUT_FALLBACK
     main._OUTPUT_FALLBACK = "cp1252"            # what Windows falls back to

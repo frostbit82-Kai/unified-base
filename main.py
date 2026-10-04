@@ -416,7 +416,15 @@ def proc_text(data) -> str:
         text = raw.decode("utf-8")
     except UnicodeDecodeError:
         text = raw.decode(_OUTPUT_FALLBACK, errors="replace")
-    return text.replace("\r\n", "\n")
+    return _ANSI_ESCAPE.sub("", text.replace("\r\n", "\n"))
+
+
+# Terminal escape sequences — colours, cursor moves, window titles. The log
+# pane is plain text, where they showed as "[36m" litter around every word.
+# ponytail: stripped, not rendered; colour in the pane would need a parser.
+# CSI (ESC [ ... final), OSC (ESC ] ... BEL/ST), and the short ones
+# (ESC [intermediates] final: ESC 7, ESC ( B ...).
+_ANSI_ESCAPE = re.compile(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\)|[ -/]*[0-~])")
 
 
 def shell_command(cmd: str, forward_args: bool = False) -> tuple[str, list]:
