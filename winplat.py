@@ -518,9 +518,14 @@ class Win32EmbedHost(QWidget):
         _SetLong(child, GWL_EXSTYLE, ex)
         SetParent(child, self._host_wid())
         w, h = self._pixel_size()
+        # Not laid out yet (still Qt's default 100x30): keep the child's own
+        # size until the first show/resize. A console squeezed to one row
+        # scrolls its view down to the cursor and never scrolls back up, so
+        # the start of the prompt stayed hidden above the top edge.
+        keep = 0 if self.isVisible() else SWP_NOSIZE
         SetWindowPos(child, None, 0, 0, w, h,
                      SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
-                     | SWP_NOACTIVATE)
+                     | SWP_NOACTIVATE | keep)
 
     def _pixel_size(self) -> tuple[int, int]:
         r = self.devicePixelRatioF()
@@ -599,6 +604,7 @@ class Win32EmbedHost(QWidget):
             if msg.message == WM_PARENTNOTIFY and \
                     (msg.wParam & 0xFFFF) in CLICKS:
                 self.clicked.emit()
+                QTimer.singleShot(0, self._focus_if_outside)
         except Exception as e:                      # never break the pump
             logger.debug(f"nativeEvent inspect failed: {e}")
         # QWidget's own nativeEvent just returns false. Calling it through
@@ -627,6 +633,23 @@ class Win32EmbedHost(QWidget):
     def focus_child(self):
         if self.child_alive():
             SetFocus(self.child_wid)
+
+    def _focus_if_outside(self):
+        """After a click inside the child, make sure it has the keyboard.
+
+        A top-level app gets focus when the click activates it; an embedded
+        one is never activated, so a window that doesn't SetFocus itself on a
+        click — conhost — kept none and every key went to the launcher. A
+        click on one of the child's own controls moves focus there by
+        itself, so focus already inside the child is left alone."""
+        if not self.child_alive():
+            return
+        info = GUITHREADINFO()
+        info.cbSize = ctypes.sizeof(GUITHREADINFO)
+        GetGUIThreadInfo(window_thread(self.child_wid), ctypes.byref(info))
+        f = _h(info.hwndFocus)
+        if f != self.child_wid and not IsChild(self.child_wid, f):
+            self.focus_child()
 
     def detach(self):
         """Hand the window back to the desktop as it was, if it still exists —
