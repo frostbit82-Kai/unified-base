@@ -19,8 +19,8 @@ launch, setup step and command-bar line goes through `ModuleTab._wrap()`,
 which applies the module's bridge.
 
 **One clone per machine**, and they meet on GitHub (`frostbit82-Kai/unified-base`,
-private): `~/Projects/Unified Base` on Linux, `Projects\Windows\Unified Base`
-on the Backup Plus drive for Windows. Commit, push, pull. A copy made any other
+private): `~/Projects/Unified Base` on Linux, `D:\Projects\Unified Base` (the
+"Storage" SD card, NTFS) on Windows. Commit, push, pull. A copy made any other
 way is how work gets stranded.
 
 **No build output in git.** Each demo rebuilds `node_modules`, `target`,
@@ -62,35 +62,35 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Linux: 55 pass. Windows build under
-  Wine: 44 pass, 9 skipped; `check_proc_table` and `check_sampler` failed there
-  only because Wine reports no CPU time / parent for other processes — on real
-  Windows they must pass, and a failure is a real bug.
+- `python test_core.py` (inside `.venv`). Real Windows: 50 pass, 9 skipped
+  (Linux-host only). Under Wine `check_proc_table` and `check_sampler` fail
+  only because Wine reports no CPU time / parent for other processes.
 - Linux GUI tests run on a nested Xvfb display, never the user's desktop;
   never `pkill -f` (it matches Claude's own shell).
 
 ## Port status (2026-10-03)
 
 Verified live on Linux: Windows apps through Wine (both Windows demos, a `.bat`
-launcher, restart/stop) embed and resize. Verified under Wine with Windows
-Python 3.12 + PyQt6 6.9.1 (the Windows code paths): embedding, resize, click
-detection (WM_PARENTNOTIFY), meters, stop, venvs, cmd.exe command bar and
-quoting, the console terminal's fallback path, env vars, logs, geometry.
+launcher, restart/stop) embed and resize.
 
-**Never tested anywhere — the Windows session's job:**
-1. `run.bat --selftest` on real Windows.
-2. Windows demos natively: win32-native (prebuilt; `make` optional via MSYS2),
-   winforms-dotnet (`winget install -e --id Microsoft.DotNet.SDK.10`). Start,
-   embed, resize, click (tab highlight), Restart, Stop.
-3. Full terminal: real `conhost.exe cmd.exe` embedding (Wine's conhost refuses
-   a command line, so only the plain-console fallback ran). Type `exit`,
-   toggle off and on: a fresh console.
-4. **WSL bridge** (Linux demos on Windows, Tux mark on their tabs): admin
-   PowerShell `wsl --install`, reboot. x11-native needs only glibc 2.26;
-   WSLg windows belong to msrdc.exe and are found by `new_windows_since`.
-5. Web demos: Edge `--app` window embedded. Toolchain Install buttons
-   (winget) and the PATH refresh afterwards. Windows 11's default-terminal
-   hand-off. DPI scaling of embedded windows on a scaled monitor.
+Verified live on real Windows 11 26H2 (Python 3.13, Qt 6.11): `--selftest` 0
+failures; test_core all pass. win32-native and winforms-dotnet: start, embed,
+resize, click highlight, Restart, Stop. The conhost terminal: embedded, takes
+the keyboard on click, `exit` + toggle gives a fresh one. Install buttons
+(winget .NET SDK, Node) incl. UAC and the live PATH refresh. Web demo in Edge
+`--app`: embeds, renders, Stop cleans up. WSL bridge with Ubuntu: Linux module
+runs, stops (Stop and quit), drive auto-mounted.
+
+**Known limits on Windows:**
+- WSLg windows (msrdc.exe RAIL) refuse SetParent — access denied, UIPI. Linux
+  modules run in their own window. Embedding them would need an X server on
+  Windows (VcXsrv/X410 — already in LINUX_WINDOW_OWNERS); untested.
+- A portable Chromium needs its folder ACL'd for app containers (the log
+  hint gives the icacls line); installed Chrome/Edge are fine.
+- Chrome/Edge `--app` windows draw their own caption strip inside the pane.
+
+**Still untested:** DPI scaling of embedded windows on a scaled monitor; the
+Python-in-WSL path (venv in the distro) live.
 
 ## Traps (each cost real time)
 
@@ -120,3 +120,11 @@ quoting, the console terminal's fallback path, env vars, logs, geometry.
   `compat.c` must never go into a native gcc build (infinite recursion).
 - On an exFAT drive Git for Windows may refuse the repo with "dubious
   ownership": `git config --global --add safe.directory "<path>"`.
+- `C:\Windows\System32\wsl.exe` exists even without WSL (installer stub):
+  readiness is `winplat.wsl_ready()` (distros under HKCU Lxss), never
+  `which("wsl.exe")`. WSL mounts fixed drives only — a module on a removable
+  drive gets `wsl_mount_args` first.
+- On Windows `os.kill` calls an already-exited process "access denied" while
+  a handle is open; `kill_pid` there is psutil's.
+- Embedded children are never activated: a click must hand them focus
+  (`_focus_if_outside`), or conhost never gets a key.
