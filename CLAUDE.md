@@ -78,19 +78,28 @@ failures; test_core all pass. win32-native and winforms-dotnet: start, embed,
 resize, click highlight, Restart, Stop. The conhost terminal: embedded, takes
 the keyboard on click, `exit` + toggle gives a fresh one. Install buttons
 (winget .NET SDK, Node) incl. UAC and the live PATH refresh. Web demo in Edge
-`--app`: embeds, renders, Stop cleans up. WSL bridge with Ubuntu: Linux module
-runs, stops (Stop and quit), drive auto-mounted.
+`--app`: embeds, renders, Stop cleans up. WSL bridge with Ubuntu: x11-native
+and the python demo (venv in the distro) run, embed, animate, take clicks,
+stop (Stop and quit); a removable drive is mounted on demand. Tk apps embed
+natively too.
+
+**Linux windows on Windows embed through VcXsrv, not WSLg.** WSLg's windows
+(msrdc.exe RAIL) refuse SetParent — access denied, UIPI. Setup on this machine:
+VcXsrv (`winget install marha.VcXsrv`), started at login by a Startup shortcut
+(`vcxsrv.exe :0 -multiwindow -clipboard -wgl -listen tcp`, no `-ac`: its
+X0.hosts admits localhost only), and `networkingMode=mirrored` in
+`%USERPROFILE%\.wslconfig` so 127.0.0.1 in WSL is Windows. With both,
+`wsl_display_env()` gives WSL launches `DISPLAY=127.0.0.1:0`; without, WSLg.
+In WSL: `apt install python3-venv python3-tk` (Ubuntu ships neither).
 
 **Known limits on Windows:**
-- WSLg windows (msrdc.exe RAIL) refuse SetParent — access denied, UIPI. Linux
-  modules run in their own window. Embedding them would need an X server on
-  Windows (VcXsrv/X410 — already in LINUX_WINDOW_OWNERS); untested.
 - A portable Chromium needs its folder ACL'd for app containers (the log
   hint gives the icacls line); installed Chrome/Edge are fine.
 - Chrome/Edge `--app` windows draw their own caption strip inside the pane.
+- VcXsrv renders in software: ~1 core for a 60 fps full-window animation,
+  embedded or not.
 
-**Still untested:** DPI scaling of embedded windows on a scaled monitor; the
-Python-in-WSL path (venv in the distro) live.
+**Still untested:** DPI scaling of embedded windows on a scaled monitor.
 
 ## Traps (each cost real time)
 
@@ -128,3 +137,13 @@ Python-in-WSL path (venv in the distro) live.
   a handle is open; `kill_pid` there is psutil's.
 - Embedded children are never activated: a click must hand them focus
   (`_focus_if_outside`), or conhost never gets a key.
+- Tk withdraws its content when parented into a still-hidden window; the
+  host shows it again once, a turn after its first showEvent.
+- VcXsrv, once its window is our child: repaints only top-level windows
+  (host invalidates at 30 Hz); maps clicks through its own copy of the
+  window's screen position, refreshed only on that window's WM_MOVE (host
+  posts one when the parent moves it); re-applies its frame and taskbar
+  button right after mapping (host strips both again); steals the
+  foreground for every new X window. Count frames on real screen pixels
+  (BitBlt of the desktop), never PrintWindow — that renders fresh and hid
+  the freeze.
