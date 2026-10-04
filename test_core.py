@@ -1160,6 +1160,16 @@ def check_wsl_wrap():
     assert args[args.index("-lc") + 1] == 'ls | wc -l "$@"', args
 
 
+def check_kill_pid_exited():
+    """A process that already exited is 'gone', not 'denied' — on Windows it
+    stays listed while a handle (Popen's here, QProcess's in the app) is open,
+    and TerminateProcess calls that access denied. The web reaper then told
+    the user to close a browser that had already closed."""
+    p = subprocess.Popen([sys.executable, "-c", "pass"])
+    p.wait()
+    assert main.kill_pid(p.pid, main.SIGKILL) == "gone"
+
+
 def check_wsl_ready():
     """wsl.exe on PATH isn't WSL: Windows 11 ships it as an installer stub.
     Ready must agree with whether `wsl --list` names a distro."""
@@ -1583,7 +1593,7 @@ if __name__ == "__main__":
                check_proc_table, check_children_walk, check_sampler,
                check_meter_widget, check_log_modes, check_meter_toggles,
                check_bridge_selection, check_wsl_paths, check_wsl_wrap,
-               check_wsl_ready, check_wine_wrap, check_detect_platform, check_start_qprocess,
+               check_wsl_ready, check_kill_pid_exited, check_wine_wrap, check_detect_platform, check_start_qprocess,
                check_module_wrap, check_wsl_pid_capture,
                check_python_under_wsl, check_program_files,
                check_toolchain_preflight, check_proc_text,

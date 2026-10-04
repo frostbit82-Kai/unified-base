@@ -317,6 +317,21 @@ def _own_child_windows() -> list[int]:
     return out
 
 
+def kill_pid(pid: int, sig: int) -> str:
+    """main.kill_pid, Windows: 'ok', 'gone' or 'denied'. os.kill can't tell a
+    process that already exited — still listed while anyone (our QProcess)
+    holds a handle — from one we may not touch: TerminateProcess says access
+    denied to both. psutil checks which, so a browser that closed on its own
+    no longer reads as stuck."""
+    try:
+        psutil.Process(pid).kill()
+        return "ok"
+    except psutil.NoSuchProcess:
+        return "gone"
+    except psutil.AccessDenied:
+        return "denied"
+
+
 def kill_process_tree(pid: int, sig: int = 15) -> int:
     """Stop a process tree. sig 9 forces (TerminateProcess); anything else is
     the polite path: WM_CLOSE to every window the tree owns — what clicking X

@@ -2778,6 +2778,7 @@ if IS_WINDOWS:
         winplat.tree_from_children)
     _proc_table = winplat.proc_table
     wsl_ready = winplat.wsl_ready
+    kill_pid = winplat.kill_pid
     EmbedHost = winplat.Win32EmbedHost
     TerminalHost = winplat.ConsoleTerminal
 
