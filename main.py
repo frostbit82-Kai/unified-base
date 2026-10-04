@@ -792,7 +792,7 @@ TOOLCHAIN_PKGS = {
                "pacman": "dotnet-sdk", "zypper": "dotnet-sdk-10.0",
                "brew": "dotnet", "winget": "Microsoft.DotNet.SDK.10"},
     "ruby":   {"apt": "ruby-full", "dnf": "ruby", "pacman": "ruby",
-               "zypper": "ruby", "brew": "ruby", "winget": "RubyInstallerTeam.Ruby.3.3"},
+               "zypper": "ruby", "brew": "ruby", "winget": "RubyInstallerTeam.Ruby.3.4"},
     "php":    {"apt": "php-cli", "dnf": "php-cli", "pacman": "php",
                "zypper": "php8", "brew": "php", "winget": "PHP.PHP.8.3"},
     "docker": {"apt": "docker.io", "dnf": "docker", "pacman": "docker",
