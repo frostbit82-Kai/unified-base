@@ -1241,21 +1241,28 @@ def check_wsl_mount_args():
 
 
 def check_npm_setup():
-    """A node_modules left by a failed `npm install` doesn't skip the next one."""
+    """`npm install` runs until it has succeeded since package.json last
+    changed: a failed install's leftovers don't skip it, a pulled dependency
+    bump re-runs it. Electron's binary download is a step of its own."""
     with tempfile.TemporaryDirectory() as d:
         p = Path(d)
-        assert main.npm_setup(p), "fresh project installs"
+        names = lambda: [s[0] for s in main.npm_setup(p)]  # noqa: E731
+        pkg = p / "package.json"
+        pkg.write_text('{"devDependencies": {"electron": "^44.0.0"}}')
+        os.utime(pkg, (1000, 1000))
+        assert names() == ["npm install", "Electron download"], names()
+        assert main.npm_setup(p)[1][1:3] == \
+            ("node", ["node_modules/electron/install.js"])
         (p / "node_modules" / "electron").mkdir(parents=True)
-        assert main.npm_setup(p), "partial node_modules installs again"
-        (p / "node_modules" / ".package-lock.json").write_text("{}")
-        assert main.npm_setup(p) == []
-        # An Electron app downloads its binary as a step, not on first start.
-        (p / "package.json").write_text('{"devDependencies": {"electron": "^44.0.0"}}')
-        steps = main.npm_setup(p)
-        assert [s[0] for s in steps] == ["Electron download"], steps
-        assert steps[0][1:3] == ("node", ["node_modules/electron/install.js"]), steps
+        assert names()[0] == "npm install", "partial node_modules installs again"
+        hidden = p / "node_modules" / ".package-lock.json"
+        hidden.write_text("{}")
+        os.utime(hidden, (2000, 2000))
+        assert names() == ["Electron download"], names()   # binary still missing
         (p / "node_modules" / "electron" / "path.txt").write_text("electron")
-        assert main.npm_setup(p) == []
+        assert names() == []
+        os.utime(pkg, (3000, 3000))          # a git pull bumped a dependency
+        assert names() == ["npm install", "Electron download"], names()
 
 
 def check_late_window_embeds():

@@ -933,21 +933,27 @@ class PythonRuntime(Runtime):
 
 
 def npm_setup(proj: Path) -> list:
-    """`npm install` until it has once succeeded. npm writes its hidden
-    lockfile last: a failed install leaves a node_modules behind that must
-    not count as installed.
+    """`npm install` until it has succeeded since package.json or its lock
+    last changed. npm writes its hidden lockfile last: a failed install
+    leaves a node_modules behind that must not count, and a pulled
+    dependency bump (git rewrites the manifests) must reach node_modules.
 
     Electron's ~100 MB binary comes from its own install.js: a postinstall
     up to Electron 41 (npm 11.19 blocks dependency scripts), the first start
     from 42 (which ate the 40 s embed wait). As a setup step it is logged
-    and untimed; path.txt is the last thing install.js writes."""
+    and untimed; path.txt is the last thing install.js writes, and after a
+    fresh npm install it runs regardless (it returns at once if current)."""
     steps = []
-    if not (proj / "node_modules" / ".package-lock.json").is_file():
+    hidden = proj / "node_modules" / ".package-lock.json"
+    done_at = hidden.stat().st_mtime if hidden.is_file() else None
+    if done_at is None or any(
+            m.is_file() and m.stat().st_mtime > done_at
+            for m in (proj / "package.json", proj / "package-lock.json")):
         steps.append(("npm install", "npm", ["install"], str(proj)))
     pkg = _read_json(proj / "package.json")
     if "electron" in {**(pkg.get("dependencies") or {}),
-                      **(pkg.get("devDependencies") or {})} and \
-            not (proj / "node_modules" / "electron" / "path.txt").is_file():
+                      **(pkg.get("devDependencies") or {})} and (steps or
+            not (proj / "node_modules" / "electron" / "path.txt").is_file()):
         steps.append(("Electron download", "node",
                       ["node_modules/electron/install.js"], str(proj)))
     return steps

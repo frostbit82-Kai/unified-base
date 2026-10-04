@@ -122,8 +122,20 @@ its Ubuntu integration is off, so WSL keeps its own engine).
 `docker-multistage-win` runs on either; `docker-windows` runs on Docker
 Desktop's Windows engine (Containers feature on, Hyper-V isolation; ~150 s
 first build incl. the Nano Server pulls). A failed build names the fix
-(`docker_hint`: engine stopped, wrong container mode, docker group). Both Linux Electron demos are on ^44 and run through
-WSL (Ubuntu 26.04's `nodejs` is 22.22; Electron 40+ needs ≥ 22.12).
+(`docker_hint`: engine stopped, wrong container mode, docker group). Both
+Linux Electron demos are on ^44 and run through WSL (Ubuntu 26.04's
+`nodejs` is 22.22; Electron 40+ needs ≥ 22.12). Final pass the same day:
+all 22 Windows demos start, embed (or finish, for the Docker two) and stop.
+
+**Handoff to the Linux clone (2026-10-04).** Pull, then: `python
+test_core.py`; `node -v` (≥ 22.12 for Electron 44, else NodeSource/nvm);
+start `Linux/node` and `Linux/node-desktop` — their old Electron 31
+`node_modules` reinstall on the first start (the pulled package.json is
+newer than npm's hidden lockfile), then Electron 44 downloads as a setup
+step. Shared code changed on Windows that Linux runs too: `npm_setup`
+(every Node/web module's setup), `docker_hint` (failed setup steps), the
+header compaction, `proc_text`'s escape stripping, `which_fresh`. The
+Linux demos weren't re-run on Linux after these.
 
 ## Traps (each cost real time)
 
@@ -146,8 +158,10 @@ WSL (Ubuntu 26.04's `nodejs` is 22.22; Electron 40+ needs ≥ 22.12).
   downloads its binary in one (31's unzip also stops silently under
   Node 26). Electron 42+ has none and fetches on first start — which ate
   the 40 s embed wait. `npm_setup` runs `node_modules/electron/install.js`
-  as a setup step for either. Its "installed" mark is
-  `node_modules/.package-lock.json` (npm writes it last), not the folder.
+  as a setup step for either. "Installed" means
+  `node_modules/.package-lock.json` (npm writes it last) newer than
+  `package.json`/`package-lock.json` — not the folder, so a failed install
+  retries and a pulled dependency bump reinstalls.
 - A drive mounted in WSL as root is root-owned: every chmod fails (npm's
   bin links: EPERM). `wsl_mount_args` copies /mnt/c's uid/gid.
 - `windows-sys` ≥ 0.60 links via raw-dylib, which on the GNU toolchain needs
