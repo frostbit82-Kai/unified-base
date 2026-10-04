@@ -24,7 +24,9 @@ Demo #1 is a pretty window. This one is the part a web page *cannot* do:
 `nodeIntegration` is off and `contextIsolation` is on throughout.
 
 ## Dependencies
-- Node.js + npm. `npm install` pulls Electron (~100 MB) on first run.
+- Node.js **22.12 or newer** + npm (Electron 44's minimum; Ubuntu 26.04's
+  `nodejs` qualifies, 24.04's doesn't). `npm install` fetches the package;
+  the Electron binary (~100 MB) downloads on the first start.
 
 ## Run
 Unified Base runs this automatically (`npx electron main.js`).
@@ -43,7 +45,7 @@ entry instead runs `npx electron main.js` and passes flags straight through.
 
 ### If it exits immediately with a `chrome-sandbox` or zygote error
 Chromium's SUID sandbox can't cope when the project path contains a space, and
-npm installs `chrome-sandbox` unprivileged. Add `--no-sandbox` to the tab's
+Electron's download leaves `chrome-sandbox` unprivileged. Add `--no-sandbox` to the tab's
 startup args, or move the checkout to a path without spaces. Unified Base
 prints the same advice in the tab log when it sees that crash.
 

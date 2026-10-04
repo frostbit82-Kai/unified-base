@@ -664,13 +664,16 @@ def wsl_mount_args(path: str) -> list | None:
     has no /mnt/<letter> until someone mounts it, and every command for a
     module on it failed to chdir. Runs as root (wsl -u root: no password),
     is a no-op when the drive is already there, lasts until WSL shuts down.
+    Owned like the automounted /mnt/c (the default user): root-owned files
+    make every chmod fail — npm's bin links, for one.
     """
     if not _WIN_ABS.match(path):
         return None
     d = path[0].lower()
     return ["--cd", "~", "-u", "root", "-e", "sh", "-c",
-            f"mountpoint -q /mnt/{d} || {{ mkdir -p /mnt/{d} && "
-            f"mount -t drvfs {d.upper()}: /mnt/{d}; }}"]
+            f"mountpoint -q /mnt/{d} || {{ o=$(stat -c uid=%u,gid=%g /mnt/c "
+            f"2>/dev/null); mkdir -p /mnt/{d} && "
+            f"mount -t drvfs {d.upper()}: /mnt/{d} ${{o:+-o $o}}; }}"]
 
 
 UBPID_RE = re.compile(r"^UBPID:(\d+)\s*$", re.M)
@@ -929,6 +932,27 @@ class PythonRuntime(Runtime):
     # setup/launch handled by ModuleTab's bespoke Python path.
 
 
+def npm_setup(proj: Path) -> list:
+    """`npm install` until it has once succeeded. npm writes its hidden
+    lockfile last: a failed install leaves a node_modules behind that must
+    not count as installed.
+
+    Electron's ~100 MB binary comes from its own install.js: a postinstall
+    up to Electron 41 (npm 11.19 blocks dependency scripts), the first start
+    from 42 (which ate the 40 s embed wait). As a setup step it is logged
+    and untimed; path.txt is the last thing install.js writes."""
+    steps = []
+    if not (proj / "node_modules" / ".package-lock.json").is_file():
+        steps.append(("npm install", "npm", ["install"], str(proj)))
+    pkg = _read_json(proj / "package.json")
+    if "electron" in {**(pkg.get("dependencies") or {}),
+                      **(pkg.get("devDependencies") or {})} and \
+            not (proj / "node_modules" / "electron" / "path.txt").is_file():
+        steps.append(("Electron download", "node",
+                      ["node_modules/electron/install.js"], str(proj)))
+    return steps
+
+
 class NodeRuntime(Runtime):
     id, label = "node", "Node.js / Electron"
 
@@ -953,10 +977,7 @@ class NodeRuntime(Runtime):
 
     @classmethod
     def setup_steps(cls, cfg):
-        proj = Path(cfg.project_dir)
-        if not (proj / "node_modules").is_dir():
-            return [("npm install", "npm", ["install"], str(proj))]
-        return []
+        return npm_setup(Path(cfg.project_dir))
 
     @classmethod
     def launch(cls, cfg):
@@ -1184,10 +1205,7 @@ class WebRuntime(Runtime):
 
     @classmethod
     def setup_steps(cls, cfg):
-        proj = Path(cfg.project_dir)
-        if not (proj / "node_modules").is_dir():
-            return [("npm install", "npm", ["install"], str(proj))]
-        return []
+        return npm_setup(Path(cfg.project_dir))
 
     @classmethod
     def launch(cls, cfg):

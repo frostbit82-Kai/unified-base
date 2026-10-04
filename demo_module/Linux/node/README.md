@@ -9,12 +9,14 @@ An embedded Electron `BrowserWindow` (900x600) — a real, visible desktop windo
 that Unified Base reparents into a tab.
 
 ## Dependencies
-- [Node.js](https://nodejs.org/) (includes `npm`)
-- Electron `^31.0.0` — pulled in automatically by `npm install`
-  (declared as a devDependency; no network calls at runtime)
+- [Node.js](https://nodejs.org/) **22.12 or newer** (includes `npm`).
+  Ubuntu 26.04's `nodejs` qualifies; Ubuntu 24.04 (18) and Debian 13 (20)
+  are too old — use NodeSource or nvm there.
+- Electron `^44.0.0` — a devDependency. `npm install` fetches the package;
+  the Electron binary itself (~100 MB) downloads on the first start.
 
 ```bash
-npm install   # downloads Electron
+npm install
 ```
 
 ## Running
@@ -23,8 +25,8 @@ Unified Base runs this automatically: it detects `package.json` and executes
 
 ## If it aborts with "The SUID sandbox helper binary was found, but is not configured correctly"
 
-Not a bug in this demo. npm installs `node_modules/electron/dist/chrome-sandbox`
-owned by you with mode 0755. On distros that block unprivileged user namespaces
+Not a bug in this demo. Electron's first start downloads
+`node_modules/electron/dist/chrome-sandbox` owned by you with mode 0755. On distros that block unprivileged user namespaces
 (Ubuntu ships `kernel.apparmor_restrict_unprivileged_userns=1`) Chromium can't
 build a namespace sandbox, falls back to that SUID helper, and refuses to start
 because it isn't root-owned. Fix once — keeps the sandbox on:
@@ -32,6 +34,6 @@ because it isn't root-owned. Fix once — keeps the sandbox on:
     sudo chown root:root node_modules/electron/dist/chrome-sandbox
     sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
 
-Any `npm install` that reinstalls electron resets it, so redo it then. The
+Any reinstall of electron resets it, so redo it then. The
 alternative is running with `--no-sandbox`, which is only sensible because this
 demo loads a local file with `nodeIntegration: false`.

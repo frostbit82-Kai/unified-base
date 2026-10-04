@@ -34,8 +34,10 @@ What it prints, from inside the container:
 - The first build pulls the Nano Server .NET images (about 1.5 GB for the
   SDK, 150 MB for the runtime).
 
-In Linux-containers mode, or on Linux, the build fails with *no matching
-manifest for linux/amd64*: these images exist only for Windows.
+In Linux-containers mode, or on Linux, the build fails: these images exist
+only for Windows. Current BuildKit pulls them anyway and stops at the first
+`RUN` with *unable to find user ContainerUser: no matching entries in passwd
+file*; older Docker says *no matching manifest for linux/amd64*.
 
 ## Run
 Unified Base builds and runs this automatically (`docker build`, then

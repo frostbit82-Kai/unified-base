@@ -1218,8 +1218,27 @@ def check_wsl_mount_args():
     line = a[-1]
     assert line.startswith("mountpoint -q /mnt/d || ") and \
         "mount -t drvfs D: /mnt/d" in line, line
+    assert "stat -c uid=%u,gid=%g /mnt/c" in line, line   # not root-owned
     assert main.wsl_mount_args("/home/me/proj") is None
     assert main.wsl_mount_args(r"\\wsl$\Ubuntu\home\me") is None
+
+
+def check_npm_setup():
+    """A node_modules left by a failed `npm install` doesn't skip the next one."""
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d)
+        assert main.npm_setup(p), "fresh project installs"
+        (p / "node_modules" / "electron").mkdir(parents=True)
+        assert main.npm_setup(p), "partial node_modules installs again"
+        (p / "node_modules" / ".package-lock.json").write_text("{}")
+        assert main.npm_setup(p) == []
+        # An Electron app downloads its binary as a step, not on first start.
+        (p / "package.json").write_text('{"devDependencies": {"electron": "^44.0.0"}}')
+        steps = main.npm_setup(p)
+        assert [s[0] for s in steps] == ["Electron download"], steps
+        assert steps[0][1:3] == ("node", ["node_modules/electron/install.js"]), steps
+        (p / "node_modules" / "electron" / "path.txt").write_text("electron")
+        assert main.npm_setup(p) == []
 
 
 def check_late_window_embeds():
@@ -1829,7 +1848,8 @@ if __name__ == "__main__":
                check_proc_table, check_children_walk, check_sampler,
                check_meter_widget, check_log_modes, check_meter_toggles,
                check_bridge_selection, check_wsl_paths, check_wsl_wrap,
-               check_wsl_ready, check_wsl_mount_args, check_late_window_embeds,
+               check_wsl_ready, check_wsl_mount_args, check_npm_setup,
+               check_late_window_embeds,
                check_wsl_display_env,
                check_frame_restrip, check_embed_refused,
                check_kill_pid_exited,

@@ -69,7 +69,7 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Real Windows: 57 pass, 9 skipped
+- `python test_core.py` (inside `.venv`). Real Windows: 58 pass, 9 skipped
   (Linux-host only). Under Wine `check_proc_table` and `check_sampler` fail
   only because Wine reports no CPU time / parent for other processes.
 - Linux GUI tests run on a nested Xvfb display, never the user's desktop;
@@ -116,8 +116,12 @@ away; toolchains installed outside the launcher are found (`which_fresh`);
 child output loses terminal escapes. Toolchains on this machine: Rust (GNU
 host, no Visual Studio), Temurin 25 + Maven (user zips), Ruby 3.4, PHP 8.4
 (winget, its `php.ini` made from `php.ini-development` + `com_dotnet`),
-zig + make, and Docker Engine *inside WSL* (no Docker Desktop yet:
-`docker-windows` is untested).
+zig + make, Docker Engine *inside WSL*, and Docker Desktop (installed
+without `--accept-license`/`--no-windows-containers`, winget's defaults;
+its Ubuntu integration is off, so WSL keeps its own engine).
+`docker-multistage-win` runs on either; `docker-windows` waits for the
+Containers feature. Both Linux Electron demos are on ^44 and run through
+WSL (Ubuntu 26.04's `nodejs` is 22.22; Electron 40+ needs ≥ 22.12).
 
 ## Traps (each cost real time)
 
@@ -136,10 +140,14 @@ zig + make, and Docker Engine *inside WSL* (no Docker Desktop yet:
   drawn in the client area). The C demos use buttons + accelerators.
 - A failed setup step stops the launch even when a prebuilt exe exists:
   the C demos' recipes are prefixed `-` only while the exe exists.
-- npm 11.19 blocks dependency install scripts by default; Electron 31
-  downloads its binary in one, whose unzip also stops silently under
-  Node 26. Electron 44 has no install script (fetches on first run):
-  the Windows Electron demos use it; `Linux/node*` still pin ^31.
+- npm 11.19 blocks dependency install scripts by default; Electron ≤ 41
+  downloads its binary in one (31's unzip also stops silently under
+  Node 26). Electron 42+ has none and fetches on first start — which ate
+  the 40 s embed wait. `npm_setup` runs `node_modules/electron/install.js`
+  as a setup step for either. Its "installed" mark is
+  `node_modules/.package-lock.json` (npm writes it last), not the folder.
+- A drive mounted in WSL as root is root-owned: every chmod fails (npm's
+  bin links: EPERM). `wsl_mount_args` copies /mnt/c's uid/gid.
 - `windows-sys` ≥ 0.60 links via raw-dylib, which on the GNU toolchain needs
   `dlltool` on PATH (Rust ships one, privately): `rust-synth` pins 0.59.
 - Fiddle runs a `bind` block with its own `self`; a Ruby exception must
