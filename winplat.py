@@ -498,7 +498,12 @@ class Win32EmbedHost(QWidget):
         self._exstyle = _signed(_GetLong(self.child_wid, GWL_EXSTYLE))
         self._last_focus = 0
         self._watched = None
-        self._attach()
+        err = self._attach()
+        if err:
+            # SetParent refused, e.g. access denied: WSLg's msrdc.exe windows
+            # can't be adopted. Fail now, not after ~6 s of healing attempts.
+            self.deleteLater()
+            raise ctypes.WinError(err)
         self._watch_surface()
         self._heal_timer = QTimer(self)
         self._heal_timer.setInterval(400)
@@ -515,10 +520,11 @@ class Win32EmbedHost(QWidget):
     def _host_wid(self) -> int:
         return int(self.winId())
 
-    def _attach(self):
+    def _attach(self) -> int:
+        """Adopt the child. Returns SetParent's error code, 0 on success."""
         child = self.child_wid
         if not IsWindow(child):
-            return
+            return 0
         if IsIconic(child) or self._style & WS_MAXIMIZE:
             ShowWindow(child, SW_RESTORE)
         # Order matters: SetParent's documentation says to clear WS_POPUP and
@@ -531,7 +537,11 @@ class Win32EmbedHost(QWidget):
                                | WS_EX_NOPARENTNOTIFY | WS_EX_TOPMOST)
         _SetLong(child, GWL_STYLE, style)
         _SetLong(child, GWL_EXSTYLE, ex)
-        SetParent(child, self._host_wid())
+        if not SetParent(child, self._host_wid()):
+            err = ctypes.get_last_error() or 5
+            _SetLong(child, GWL_STYLE, self._style)     # not a parentless child
+            _SetLong(child, GWL_EXSTYLE, self._exstyle)
+            return err
         w, h = self._pixel_size()
         # Not laid out yet (still Qt's default 100x30): keep the child's own
         # size until the first show/resize. A console squeezed to one row
@@ -541,6 +551,7 @@ class Win32EmbedHost(QWidget):
         SetWindowPos(child, None, 0, 0, w, h,
                      SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
                      | SWP_NOACTIVATE | keep)
+        return 0
 
     def _pixel_size(self) -> tuple[int, int]:
         r = self.devicePixelRatioF()

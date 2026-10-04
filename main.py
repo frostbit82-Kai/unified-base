@@ -636,6 +636,22 @@ def wsl_shell(script: str, cwd, extra: list | None = None,
                               f'{pre}{script} "$@"', "ub"] + list(extra or [])
 
 
+def wsl_mount_args(path: str) -> list | None:
+    """wsl.exe args that make sure `path`'s Windows drive is mounted in WSL.
+
+    WSL automounts fixed drives only. A removable one (USB stick, SD card)
+    has no /mnt/<letter> until someone mounts it, and every command for a
+    module on it failed to chdir. Runs as root (wsl -u root: no password),
+    is a no-op when the drive is already there, lasts until WSL shuts down.
+    """
+    if not _WIN_ABS.match(path):
+        return None
+    d = path[0].lower()
+    return ["--cd", "~", "-u", "root", "-e", "sh", "-c",
+            f"mountpoint -q /mnt/{d} || {{ mkdir -p /mnt/{d} && "
+            f"mount -t drvfs {d.upper()}: /mnt/{d}; }}"]
+
+
 UBPID_RE = re.compile(r"^UBPID:(\d+)\s*$", re.M)
 
 
@@ -3748,6 +3764,11 @@ class ModuleTab(QWidget):
                      ["wineboot", "--init"], str(self.cfg.project_dir),
                      {"WINEPREFIX": str(prefix), "WINEDEBUG": "-all",
                       "WINEDLLOVERRIDES": "mscoree,mshtml="})]
+        mount = wsl_mount_args(str(self.cfg.project_dir)) \
+            if self.bridge == "wsl" else None
+        if mount:
+            return [("making the project's drive visible to WSL", "wsl.exe",
+                     mount, str(self.cfg.project_dir))]
         return []
 
     # -- env setup ----------------------------------------------------------
@@ -3891,7 +3912,8 @@ class ModuleTab(QWidget):
                 self.cfg.project_dir,
                 {"PYTHONPATH": to_wsl_path(self.cfg.project_dir)})
         self._run_command_chain(
-            [("preparing Python env in WSL", prog, args, str(proj))],
+            self._bridge_steps()
+            + [("preparing Python env in WSL", prog, args, str(proj))],
             on_ok=launch)
 
     def rebuild_env(self):
@@ -4251,6 +4273,16 @@ class ModuleTab(QWidget):
             # Reparenting unavailable (Wayland, or a window Windows won't let
             # us adopt); try Qt's own container instead.
             logger.debug(f"Reparent failed: {e}")
+            if IS_WINDOWS:
+                # Qt's container would only SetParent again and fail the same.
+                why = (" WSLg windows belong to msrdc.exe, which Windows won't "
+                       "let another program adopt." if self.bridge == "wsl"
+                       else "")
+                self._log(f"Can't embed this window: "
+                          f"{getattr(e, 'strerror', None) or e}{why} It runs "
+                          "in its own window.")
+                self._set_status("running (own window)")
+                return
             if IS_WAYLAND:
                 self._log(f"X reparent unavailable on Wayland ({e}); "
                           "trying Qt container fallback…")

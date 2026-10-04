@@ -930,7 +930,12 @@ def check_sampler():
     busy = subprocess.Popen(
         [sys.executable, "-c",
          "import time\nt=time.time()\nwhile time.time()-t<6: pass"])
-    idle = subprocess.Popen([sys.executable, "-c", "import time;time.sleep(6)"])
+    # Baseline only once it's up: interpreter startup is CPU too, and from a
+    # slow drive (an SD card) it read 12.6% inside the measured window.
+    idle = subprocess.Popen(
+        [sys.executable, "-c", "import time;print(flush=True);time.sleep(6)"],
+        stdout=subprocess.PIPE)
+    idle.stdout.readline()
     try:
         sam = main.ResourceSampler()
         sam.set_roots("busy", [busy.pid])
@@ -1160,6 +1165,53 @@ def check_wsl_wrap():
     assert args[args.index("-lc") + 1] == 'ls | wc -l "$@"', args
 
 
+def check_wsl_mount_args():
+    """A module on a removable drive (D: is an SD card here) gets its drive
+    mounted in WSL first; already-mounted drives make it a no-op."""
+    a = main.wsl_mount_args(r"D:\Projects\Unified Base\demo")
+    assert a[:4] == ["--cd", "~", "-u", "root"], a
+    line = a[-1]
+    assert line.startswith("mountpoint -q /mnt/d || ") and \
+        "mount -t drvfs D: /mnt/d" in line, line
+    assert main.wsl_mount_args("/home/me/proj") is None
+    assert main.wsl_mount_args(r"\\wsl$\Ubuntu\home\me") is None
+
+
+def check_embed_refused():
+    """A window Windows won't let us adopt (WSLg's msrdc.exe: access denied)
+    fails the embed at once with its styles restored, instead of logging
+    success and then 6 s of failed healing."""
+    if not ON_WINDOWS:
+        return
+    import ctypes
+    import winplat
+    from PyQt6.QtWidgets import QWidget
+    _app()
+    # A real top-level HWND: offscreen Qt widgets have none.
+    cw = winplat.user32.CreateWindowExW
+    cw.restype = winplat.HWND
+    cw.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                   ctypes.c_uint32] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4
+    wid = int(cw(0, "STATIC", "ub probe", winplat.WS_POPUP, 0, 0, 80, 80,
+                 None, None, None, None))
+    before = winplat._GetLong(wid, winplat.GWL_STYLE)
+    keep = winplat.SetParent
+
+    def refuse(_child, _parent):
+        ctypes.set_last_error(5)
+        return None
+    winplat.SetParent = refuse
+    try:
+        main.EmbedHost(wid, QWidget())
+        raise AssertionError("embedding a refused window succeeded")
+    except PermissionError:
+        pass
+    finally:
+        winplat.SetParent = keep
+    assert winplat._GetLong(wid, winplat.GWL_STYLE) == before
+    winplat.user32.DestroyWindow(winplat.HWND(wid))
+
+
 def check_kill_pid_exited():
     """A process that already exited is 'gone', not 'denied' — on Windows it
     stays listed while a handle (Popen's here, QProcess's in the app) is open,
@@ -1361,7 +1413,9 @@ def check_python_under_wsl():
             tab._launch_process = lambda prog, args, wd, env=None, **k: \
                 seen.update(launch=(prog, args, env))
             tab._start_python_wsl(proj)
-            (label, prog, args, cwd), = seen["steps"]
+            *mount, (label, prog, args, cwd) = seen["steps"]
+            # A Windows path (real host) has its drive mounted in WSL first.
+            assert len(mount) == (1 if ON_WINDOWS else 0), mount
             script = args[args.index("-lc") + 1]
             assert prog == "wsl.exe" and "python3 -m venv" in script, script
             assert "requests" in script and "-r " in script, script
@@ -1593,7 +1647,9 @@ if __name__ == "__main__":
                check_proc_table, check_children_walk, check_sampler,
                check_meter_widget, check_log_modes, check_meter_toggles,
                check_bridge_selection, check_wsl_paths, check_wsl_wrap,
-               check_wsl_ready, check_kill_pid_exited, check_wine_wrap, check_detect_platform, check_start_qprocess,
+               check_wsl_ready, check_wsl_mount_args, check_embed_refused,
+               check_kill_pid_exited,
+               check_wine_wrap, check_detect_platform, check_start_qprocess,
                check_module_wrap, check_wsl_pid_capture,
                check_python_under_wsl, check_program_files,
                check_toolchain_preflight, check_proc_text,
