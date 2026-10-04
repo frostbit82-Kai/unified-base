@@ -33,6 +33,7 @@ import tempfile
 import time
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
+from urllib.parse import unquote
 
 # ponytail: minimal logging setup, no config files
 logger = logging.getLogger("unified_base")
@@ -465,11 +466,111 @@ PLATFORM_NEEDS = {"": "Runs anywhere", "linux": "Linux only",
                   "windows": "Windows only"}
 
 
-# Runtimes whose Windows-only programs Wine can't run without that language's
-# own Windows toolchain installed inside the prefix.
-WINE_NEEDS_WINDOWS_TOOLCHAIN = {"python": "Python", "node": "Node.js",
-                                "web": "Node.js", "java": "Java",
-                                "ruby": "Ruby", "php": "PHP"}
+# Windows toolchains for Windows-only programs in interpreted languages. Wine
+# runs .exe files, not a Python or Ruby project, so the first start of such a
+# module on Linux installs that language's official Windows build into the
+# module's Wine prefix, under C:\ub\<dir> — the mirror of WSL, where a Linux
+# module's toolchain lives in the distro. Pinned builds, each checked against
+# its publisher's checksum (python.org's Sigstore signature, Adoptium's and
+# GitHub's SHA-256) before it was pinned here and against that pin before any
+# of it runs. Downloads are cached in APP_DIR/downloads.
+#   install  — an installer's quiet arguments ({dir} = the C:\ub folder);
+#              without one the download is a zip, unpacked minus its top folder
+#   extras   — single files taken from other zips: Ruby's UCRT build checks the
+#              C runtime's internals, which Wine's own ucrtbase fails, so it
+#              gets Microsoft's (from the .NET Core 3.1 runtime pack, a plain
+#              zip — the VC++ redistributable needs cabextract)
+#   env      — added to the launch; native_build — the build still runs on
+#              Linux (Maven makes a jar; only running it needs Windows Java)
+WINE_TOOLCHAINS = {
+    "python": {
+        "label": "Python 3.12 for Windows", "mb": 26,
+        "url": "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe",
+        "sha256": "67b5635e80ea51072b87941312d00ec8927c4db9ba18938f7ad2d27b328b95fb",
+        "dir": "python312", "exe": "python.exe",
+        "install": ["/quiet", "InstallAllUsers=0", "TargetDir={dir}",
+                    "Include_test=0", "Include_launcher=0", "Shortcuts=0",
+                    "AssociateFiles=0", "PrependPath=0"],
+    },
+    "java": {
+        "label": "Temurin JDK 25 for Windows", "mb": 135, "swap": "java",
+        "url": "https://github.com/adoptium/temurin25-binaries/releases/download/"
+               "jdk-25.0.4.1%2B1/OpenJDK25U-jdk_x64_windows_hotspot_25.0.4.1_1.zip",
+        "sha256": "00c847d804f4a78e9f04f2683faf14fed898535b177b7fc704486cb0284e9283",
+        "dir": "jdk25", "exe": "bin/java.exe", "native_build": True,
+    },
+    "ruby": {
+        "label": "Ruby 3.4 for Windows (RubyInstaller)", "mb": 20, "swap": "ruby",
+        "url": "https://github.com/oneclick/rubyinstaller2/releases/download/"
+               "RubyInstaller-3.4.11-1/rubyinstaller-3.4.11-1-x64.exe",
+        "sha256": "f873a6c15b79123ffa736b8c82b8fc80a6b304b81864f6c11a549c69b063ddb5",
+        "dir": "ruby34", "exe": "bin/ruby.exe",
+        "install": ["/verysilent", "/currentuser", "/dir={dir}", "/tasks=",
+                    "/noicons"],
+        "extras": [{
+            "url": "https://api.nuget.org/v3-flatcontainer/microsoft.netcore.app."
+                   "runtime.win-x64/3.1.32/microsoft.netcore.app.runtime.win-x64."
+                   "3.1.32.nupkg",
+            "sha256": "1cefabea41de8d5507bb24add822556ed461a3b603dba636ead819d4df005563",
+            "member": "runtimes/win-x64/native/ucrtbase.dll", "to": "bin",
+            "mb": 31}],
+        "env": {"WINEDLLOVERRIDES": "ucrtbase=n,b"},
+    },
+}
+
+# Runtimes with no Windows toolchain above: their Windows-only programs can't
+# run under Wine.
+WINE_NEEDS_WINDOWS_TOOLCHAIN = {"node": "Node.js", "web": "Node.js", "php": "PHP"}
+
+# Fetches one pinned download (run by the launcher's own Python as a logged
+# setup step): download unless the cached copy matches, refuse a file whose
+# SHA-256 differs from the pin, then optionally unzip all of it (minus the top
+# folder) or one member into a folder.
+# ponytail: needs sys.executable to be a Python — a frozen build needs another runner.
+WINE_FETCH = r"""
+import hashlib, os, shutil, sys, urllib.request, zipfile
+url, dest, sha = sys.argv[1:4]
+def digest(p):
+    with open(p, "rb") as f:
+        return hashlib.file_digest(f, "sha256").hexdigest()
+if not (os.path.isfile(dest) and digest(dest) == sha):
+    print("Downloading " + url, flush=True)
+    part = dest + ".part"
+    with urllib.request.urlopen(url, timeout=60) as r, open(part, "wb") as f:
+        total, got, shown = int(r.headers.get("Content-Length") or 0), 0, 0
+        while chunk := r.read(1 << 20):
+            f.write(chunk)
+            got += len(chunk)
+            if total and got * 10 // total > shown:
+                shown = got * 10 // total
+                print(f"  {shown * 10}% of {total >> 20} MB", flush=True)
+    if digest(part) != sha:
+        os.remove(part)
+        sys.exit(f"Checksum mismatch: {url} is not the pinned file. Nothing "
+                 "of it was used.")
+    os.replace(part, dest)
+if len(sys.argv) > 4:
+    out, member = os.path.abspath(sys.argv[4]), (sys.argv[5:] or [None])[0]
+    with zipfile.ZipFile(dest) as z:
+        for m in z.infolist():
+            if member and m.filename != member:
+                continue
+            # one member by its own name, or everything minus the top folder
+            name = (os.path.basename(member) if member
+                    else m.filename.partition("/")[2])
+            path = os.path.abspath(os.path.join(out, name))
+            if m.is_dir() or not name or not path.startswith(out + os.sep):
+                continue
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with z.open(m) as src, open(path, "wb") as dst:
+                shutil.copyfileobj(src, dst)
+    print("Unpacked into " + out, flush=True)
+"""
+
+
+def wine_path(p) -> str:
+    """A Linux path as Wine programs see it: drive Z: is the root."""
+    return "Z:" + str(p).replace("/", "\\")
 
 
 def bridge_for(need: str) -> str:
@@ -4045,13 +4146,70 @@ class ModuleTab(QWidget):
                     "try it here anyway.")
         return None
 
+    def _prefix(self) -> Path:
+        """This module's Wine prefix. Its own WINEPREFIX (Environment
+        variables) wins, as it does at launch; checking only the shared prefix
+        let a fresh private one get built mid-launch, and its "updating"
+        window got embedded."""
+        return Path((self.cfg.extra_env or {}).get("WINEPREFIX")
+                    or wine_prefix())
+
+    def _wine_toolchain(self) -> dict | None:
+        """The Windows toolchain this module runs on under Wine, if any."""
+        return WINE_TOOLCHAINS.get(self.cfg.runtime) \
+            if self.bridge == "wine" else None
+
+    def _wine_tool(self) -> Path | None:
+        """That toolchain's program (python.exe, java.exe ...) in the prefix."""
+        tc = self._wine_toolchain()
+        return None if tc is None else \
+            self._prefix() / "drive_c" / "ub" / tc["dir"] / tc["exe"]
+
+    def _wine_tool_win(self) -> str:
+        """The same program by its C: path, which is how Windows programs get
+        it: run from its Z: path (under ~/.unified_base) Python's Tcl can't
+        find init.tcl and Tk fails; from C:\\ub it starts."""
+        tc = self._wine_toolchain()
+        return "C:\\ub\\" + tc["dir"] + "\\" + tc["exe"].replace("/", "\\")
+
+    def _toolchain_steps(self) -> list:
+        """Fetch and install the Windows toolchain into the prefix, once."""
+        tc = self._wine_toolchain()
+        if tc is None:
+            return []
+        folder = self._prefix() / "drive_c" / "ub" / tc["dir"]
+        cache = APP_DIR / "downloads"
+        cache.mkdir(parents=True, exist_ok=True)
+        wenv = {"WINEPREFIX": str(self._prefix()), "WINEDEBUG": "-all"}
+        steps = []
+        if not self._wine_tool().is_file():
+            file = cache / unquote(tc["url"].rsplit("/", 1)[-1])
+            steps.append((f"downloading {tc['label']} ({tc['mb']} MB, first "
+                          "run)", sys.executable,
+                          ["-c", WINE_FETCH, tc["url"], str(file), tc["sha256"]]
+                          + ([] if tc.get("install") else [str(folder)]),
+                          str(cache)))
+            if tc.get("install"):
+                win_dir = "C:\\ub\\" + tc["dir"]
+                steps.append((f"installing {tc['label']} into Wine",
+                              wine_program() or "wine",
+                              [wine_path(file)] + [a.replace("{dir}", win_dir)
+                                                   for a in tc["install"]],
+                              str(cache), wenv))
+        for x in tc.get("extras", ()):
+            if (folder / x["to"] / Path(x["member"]).name).is_file():
+                continue
+            file = cache / unquote(x["url"].rsplit("/", 1)[-1])
+            steps.append((f"downloading {Path(x['member']).name} for "
+                          f"{tc['label']} ({x['mb']} MB)",
+                          sys.executable,
+                          ["-c", WINE_FETCH, x["url"], str(file), x["sha256"],
+                           str(folder / x["to"]), x["member"]], str(cache)))
+        return steps
+
     def _bridge_steps(self) -> list:
         """Setup the bridge itself needs before the module's own steps."""
-        # The module's own WINEPREFIX (Environment variables) wins, as it does
-        # at launch; checking only the shared prefix let a fresh private one
-        # get built mid-launch, and its "updating" window got embedded.
-        prefix = Path((self.cfg.extra_env or {}).get("WINEPREFIX")
-                      or wine_prefix())
+        prefix = self._prefix()
         if self.bridge == "wine" and not (prefix / "system.reg").is_file():
             # First use: build the prefix up front, headless, so its ~20 s and
             # Wine's own dialogs don't land inside the app's launch. mscoree/
@@ -4061,7 +4219,10 @@ class ModuleTab(QWidget):
             return [("preparing Wine prefix (first run)", wine_program() or "wine",
                      ["wineboot", "--init"], str(self.cfg.project_dir),
                      {"WINEPREFIX": str(prefix), "WINEDEBUG": "-all",
-                      "WINEDLLOVERRIDES": "mscoree,mshtml="})]
+                      "WINEDLLOVERRIDES": "mscoree,mshtml="})] + \
+                self._toolchain_steps()
+        if self.bridge == "wine":
+            return self._toolchain_steps()
         mount = wsl_mount_args(str(self.cfg.project_dir)) \
             if self.bridge == "wsl" else None
         if mount:
@@ -4100,8 +4261,9 @@ class ModuleTab(QWidget):
             return
         # The native toolchain check is meaningless inside WSL: node or dotnet
         # living in the distro is invisible from the Windows PATH.
-        miss = None if self.bridge == "wsl" else \
-            missing_toolchain_msg(self.cfg.runtime)
+        tc = self._wine_toolchain()
+        miss = None if self.bridge == "wsl" or (tc and not tc.get(
+            "native_build")) else missing_toolchain_msg(self.cfg.runtime)
         if miss:
             self._log(miss)
             self._set_status("missing toolchain")
@@ -4126,6 +4288,8 @@ class ModuleTab(QWidget):
         if self.cfg.runtime == "python":
             if self.bridge == "wsl":
                 self._start_python_wsl(proj)
+            elif self.bridge == "wine":
+                self._start_python_wine(proj)
             else:
                 self._start_python(proj)
             return
@@ -4160,15 +4324,24 @@ class ModuleTab(QWidget):
             self._log(f"Unknown runtime: {self.cfg.runtime}")
             self._set_status("setup failed")
             return
+        tc = self._wine_toolchain()
+
         def launch():
             # Asked after setup, not before: what a build entry runs (the jar
             # mvn makes, the newest program make leaves) doesn't exist until
             # the build has run, and a fresh clone ran `java -jar (build)`.
             spec = rt.launch(self.cfg)
-            self._launch_process(spec.program, spec.args, spec.workdir,
-                                 spec.extra_env)
-        self._run_command_chain(
-            self._bridge_steps() + rt.setup_steps(self.cfg), on_ok=launch)
+            program, env = spec.program, dict(spec.extra_env or {})
+            if tc and Path(program).name == tc.get("swap"):
+                program = self._wine_tool_win()     # java -> its java.exe
+                env.update(tc.get("env", {}))
+            self._launch_process(program, spec.args, spec.workdir, env)
+        # ponytail: under Wine a Ruby module's Gemfile isn't bundled (the
+        # native `bundle` is the wrong Ruby); add a Windows bundle step when a
+        # Windows-only Ruby module brings one.
+        native = rt.setup_steps(self.cfg) \
+            if not tc or tc.get("native_build") else []
+        self._run_command_chain(self._bridge_steps() + native, on_ok=launch)
 
     def _start_server(self, rt):
         def go():
@@ -4184,19 +4357,57 @@ class ModuleTab(QWidget):
         self._run_command_chain(self._bridge_steps() + rt.setup_steps(self.cfg),
                                 on_ok=go)
 
+    def _python_packages(self, proj: Path, path=str) -> list:
+        """pip install arguments for a project: its requirement files (paths
+        via `path`), declared deps, scanned imports, EXTRA_PIP_PACKAGES."""
+        pkgs = []
+        for r in find_requirement_files(proj):
+            pkgs += ["-r", path(r)]
+        declared = declared_python_deps(proj)
+        scanned = [d for d in scan_imports(proj) if d not in declared]
+        return pkgs + declared + scanned + \
+            self.cfg.extra_env.get("EXTRA_PIP_PACKAGES", "").split()
+
+    def _wine_env_dir(self) -> Path:
+        return ENVS_DIR / f"{self.cfg.env_dir.name}-wine"
+
+    def _start_python_wine(self, proj: Path):
+        """A Windows-only Python program on Linux: the Windows Python in the
+        module's Wine prefix (installed on first use, see WINE_TOOLCHAINS),
+        with a venv of its own built by that Python — a Linux venv is useless
+        to it, as a Windows one is to WSL."""
+        env_dir = self._wine_env_dir()
+        env_py = env_dir / "Scripts" / "python.exe"
+        wine = wine_program() or "wine"
+        wenv = {"WINEPREFIX": str(self._prefix()), "WINEDEBUG": "-all"}
+        steps = self._bridge_steps()
+        # Scripts/pip.exe, not python.exe: a venv whose ensurepip failed has
+        # the one without the other (the WSL lesson).
+        if not (env_dir / "Scripts" / "pip.exe").is_file():
+            ENVS_DIR.mkdir(parents=True, exist_ok=True)
+            steps.append(("creating a Windows venv", wine,
+                          [self._wine_tool_win(), "-m", "venv", "--clear",
+                           wine_path(env_dir)], str(proj), wenv))
+        pkgs = self._python_packages(proj, path=wine_path)
+        if pkgs:
+            self._log("Packages for Windows Python: " + " ".join(pkgs))
+            steps.append(("installing deps (Windows Python)", wine,
+                          [wine_path(env_py), "-m", "pip", "install",
+                           "--disable-pip-version-check", "--no-input", *pkgs],
+                          str(proj), wenv))
+
+        def launch():
+            self.run_python = env_py
+            self._launch()
+        self._run_command_chain(steps, on_ok=launch)
+
     def _start_python_wsl(self, proj: Path):
         """Python inside WSL. The venv lives in the distro's own home and is
         built by the distro's python3 — a Windows venv is useless to Linux, and
         one on /mnt/c is painfully slow. Same dependency discovery as native."""
         env_name = "_shared" if self.cfg.use_shared else self.cfg.env_dir.name
         venv = f'"$HOME/.unified_base/envs/{env_name}"'
-        pkgs = []
-        for r in find_requirement_files(proj):
-            pkgs += ["-r", to_wsl_path(str(r))]
-        declared = declared_python_deps(proj)
-        scanned = [d for d in scan_imports(proj) if d not in declared]
-        pkgs += declared + scanned + \
-            self.cfg.extra_env.get("EXTRA_PIP_PACKAGES", "").split()
+        pkgs = self._python_packages(proj, path=lambda r: to_wsl_path(str(r)))
         # bin/pip, not bin/python: a venv that failed for want of ensurepip
         # (no python3-venv in the distro) leaves bin/python behind, and was
         # then taken as ready forever after the package was installed.
@@ -4221,6 +4432,10 @@ class ModuleTab(QWidget):
             on_ok=launch)
 
     def rebuild_env(self):
+        if self.cfg.runtime == "python" and self.bridge == "wine":
+            shutil.rmtree(self._wine_env_dir(), ignore_errors=True)
+            self.start()
+            return
         if self.cfg.runtime == "python":
             env_dir, _ = self._env_paths()
             if env_dir.exists():
@@ -4365,7 +4580,8 @@ class ModuleTab(QWidget):
                 return
             label, prog, args, cwd, *opt = queue.pop(0)
             self._set_status(label)
-            self._log(f"$ {prog} {' '.join(args)}  (in {cwd})")
+            shown = " ".join("<script>" if "\n" in a else a for a in args)
+            self._log(f"$ {prog} {shown}  (in {cwd})")
             self._run_setup(prog, args, on_ok=run_next, cwd=cwd,
                             env=opt[0] if opt else None)
         run_next()
@@ -4379,6 +4595,8 @@ class ModuleTab(QWidget):
         old_pp = os.environ.get("PYTHONPATH", "")
         extra = {"PYTHONPATH": self.cfg.project_dir +
                  (os.pathsep + old_pp if old_pp else "")}
+        if self.bridge == "wine":       # Windows Python: Z:\ paths, ; lists
+            extra = {"PYTHONPATH": wine_path(self.cfg.project_dir)}
         self._log(f"$ {py} {self.cfg.entry}")
         self._launch_process(str(py), [self.cfg.entry],
                              self.cfg.project_dir, extra)

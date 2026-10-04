@@ -1913,9 +1913,9 @@ def check_windows_only_evidence():
 
 @linux_host
 def check_wine_runtimes():
-    """On Linux a Windows-only module either crosses over (C#, Rust: build a
-    Windows .exe here, Wine runs it) or says why it can't (interpreted
-    languages need their Windows toolchain; Windows containers need Windows)."""
+    """On Linux a Windows-only module crosses over (C#, Rust: build a Windows
+    .exe here; Python, Java, Ruby: their Windows toolchain in the prefix) or
+    says why it can't (Node/PHP, Windows containers)."""
     _app()
     rust = main.ModuleConfig(name="s", project_dir="/p", runtime="binary",
                              entry=main.BinaryRuntime.CARGO, platform="windows")
@@ -1927,13 +1927,78 @@ def check_wine_runtimes():
         rust.project_dir = d
         prog = main.BinaryRuntime.launch(rust).program
         assert prog.endswith(f"{main.BinaryRuntime.WIN_TARGET}/release/synth.exe"), prog
-    for rt, word in (("java", "Java"), ("ruby", "Ruby"), ("docker", "Windows containers")):
+    for rt, word in (("php", "PHP"), ("node", "Node.js"),
+                     ("docker", "Windows containers")):
         tab = main.ModuleTab(main.ModuleConfig(name=rt, project_dir="/p",
                                                entry="", runtime=rt,
                                                platform="windows"))
         msg = tab._bridge_problem() or ""
         assert word in msg, (rt, msg)
         tab.shutdown()
+    with tempfile.TemporaryDirectory() as d:
+        keep = main.APP_DIR
+        main.APP_DIR = Path(d)
+        try:
+            for rt in ("python", "java", "ruby"):
+                tc = main.WINE_TOOLCHAINS[rt]
+                tab = main.ModuleTab(main.ModuleConfig(
+                    name=rt, project_dir=d, entry="", runtime=rt,
+                    platform="windows",
+                    extra_env={"WINEPREFIX": str(Path(d) / "pfx")}))
+                assert tab._bridge_problem() is None, rt
+                (Path(d) / "pfx").mkdir(exist_ok=True)
+                (Path(d) / "pfx" / "system.reg").write_text("")
+                steps = tab._toolchain_steps()
+                fetch = [s for s in steps if main.WINE_FETCH in s[2]]
+                assert fetch and fetch[0][2][2] == tc["url"], (rt, steps)
+                assert fetch[0][2][4] == tc["sha256"]
+                inst = [s for s in steps if s[1] == (main.wine_program() or "wine")]
+                assert bool(inst) == bool(tc.get("install")), (rt, steps)
+                if inst:       # the installer gets C:\ub\<dir> as its target
+                    assert any("C:\\ub\\" + tc["dir"] in a for a in inst[0][2])
+                    assert inst[0][4]["WINEPREFIX"] == str(Path(d) / "pfx")
+                # Once the program (and any extra) is there: nothing to do.
+                for p in [tab._wine_tool()] + [
+                        Path(d) / "pfx" / "drive_c" / "ub" / tc["dir"] / x["to"]
+                        / Path(x["member"]).name for x in tc.get("extras", ())]:
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_bytes(b"MZ")
+                assert tab._toolchain_steps() == [], (rt, tab._toolchain_steps())
+                assert tab._wine_tool_win().startswith("C:\\ub\\" + tc["dir"])
+                tab.shutdown()
+        finally:
+            main.APP_DIR = keep
+
+
+def check_wine_fetch():
+    """The toolchain fetcher: a cached file that matches its pin is used, one
+    that doesn't is refused and never kept, and unzipping drops the top folder
+    (or takes one member) without escaping the target."""
+    import hashlib
+    import zipfile
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        src = d / "pkg.zip"
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr("jdk-1/bin/java.exe", b"MZ java")
+            z.writestr("jdk-1/lib/x.txt", b"x")
+            z.writestr("runtimes/win-x64/native/ucrtbase.dll", b"MZ crt")
+        sha = hashlib.sha256(src.read_bytes()).hexdigest()
+        url = src.as_uri()                         # urllib reads file:// too
+        run = lambda *a: subprocess.run([sys.executable, "-c", main.WINE_FETCH,
+                                         *map(str, a)], capture_output=True,
+                                        text=True, timeout=60)
+        r = run(url, d / "dl.zip", "0" * 64)
+        assert r.returncode != 0 and "Checksum mismatch" in r.stderr, r
+        assert not (d / "dl.zip").exists() and not (d / "dl.zip.part").exists()
+        r = run(url, d / "dl.zip", sha, d / "jdk")
+        assert r.returncode == 0, r.stderr
+        assert (d / "jdk" / "bin" / "java.exe").read_bytes() == b"MZ java"
+        assert (d / "jdk" / "lib" / "x.txt").is_file()
+        r = run(url, d / "dl.zip", sha, d / "one",
+                "runtimes/win-x64/native/ucrtbase.dll")
+        assert r.returncode == 0 and "Downloading" not in r.stdout, r  # cached
+        assert [p.name for p in (d / "one").iterdir()] == ["ucrtbase.dll"]
 
 
 def check_launch_after_setup():
@@ -2007,7 +2072,8 @@ if __name__ == "__main__":
                check_wsl_kill_tree, check_force_kill_restart,
                check_wine_family, check_private_wineprefix_boot,
                check_os_badge, check_windows_only_evidence,
-               check_wine_runtimes, check_launch_after_setup,
+               check_wine_runtimes, check_wine_fetch,
+               check_launch_after_setup,
                check_x11_hints):
         if ON_WINDOWS and fn in LINUX_HOST:
             print(f"skip {fn.__name__} (Linux host only)")

@@ -86,9 +86,14 @@ prefix at `~/.unified_base/wine/default`. Wine draws real X11 windows, so
 Windows apps embed into panes exactly like Linux ones. Builds still run
 natively — a Windows-only .NET app is published for `win-x64` by the Linux
 SDK, and a Windows-only Rust crate is built for `x86_64-pc-windows-gnu` with
-MinGW — then Wine runs the `.exe`. Windows-only programs in Python, Java,
-Ruby, PHP or Node.js would need that language's Windows build inside Wine,
-so Linux explains instead of running them (Windows containers likewise).
+MinGW — then Wine runs the `.exe`. A Windows-only program in Python, Java
+or Ruby runs on that language's official Windows build, which the first
+start installs into the module's Wine prefix (`C:\ub\…`): Python 3.12
+(26 MB), Temurin JDK 25 (135 MB; Maven still builds the jar on Linux),
+Ruby 3.4 (20 MB, plus Microsoft's C runtime, 31 MB). Each download is pinned
+and checked against its SHA-256 before it runs; later starts reuse it.
+Windows-only Node.js or PHP programs, and Windows containers, get an
+explanation instead.
 Point a module at its own prefix by setting
 `WINEPREFIX` in its Environment variables. Wine detaches every program a
 Windows program starts (the app a `.bat` runs, the game a launcher opens);

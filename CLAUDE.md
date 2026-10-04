@@ -72,10 +72,11 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Linux: 72 pass. Real Windows: 59
-  pass, 9 skipped as of 2026-10-04 morning; the Linux pass after it added 3
-  portable checks and 1 Linux-host one, so expect 62 pass, 10 skipped. Under Wine `check_proc_table` and `check_sampler` fail
-  only because Wine reports no CPU time / parent for other processes.
+- `python test_core.py` (inside `.venv`). Linux: 73 pass. Real Windows: 59
+  pass, 9 skipped as of 2026-10-04 morning; the Linux pass after it added 4
+  portable checks and 1 Linux-host one, so expect 63 pass, 10 skipped.
+  Under Wine `check_proc_table` and `check_sampler` fail only because Wine
+  reports no CPU time / parent for other processes.
 - Linux GUI tests run on a nested Xvfb display, never the user's desktop;
   never `pkill -f` (it matches Claude's own shell).
 
@@ -153,14 +154,24 @@ for `x86_64-pc-windows-gnu`, the C# pattern). csharp-binding-win: WPF
 FailFasts in font fallback under Wine (Wine limit). The interpreted
 Windows-only ones (python-winapi, java-ffm, ruby-com, ruby-lsystem-win) and
 docker-windows are now *detected* as Windows (they get the four-pane mark
-on both OSes) and Linux says why it can't run them. Not built yet, but
-proven: a Windows Python 3.12 inside the Wine prefix runs python-winapi's
-`--selftest` — Windows toolchains in the prefix would be the mirror of WSL's.
+on both OSes). The first three languages run on their own Windows build
+inside the module's Wine prefix — `WINE_TOOLCHAINS`, the mirror of WSL
+holding Linux toolchains: pinned official downloads (Python 3.12.10,
+Temurin 25.0.4.1, RubyInstaller 3.4.11-1, plus Microsoft's ucrtbase.dll from
+the .NET Core 3.1.32 runtime pack), SHA-256-checked by `WINE_FETCH`,
+installed into `C:\ub\<dir>` on first start. All four demos embed, restart
+and stop on Linux. docker-windows explains itself.
 Existing configs keep the platform they were added with: on Windows,
 re-add those demos (or right-click ▸ Runs on ▸ Windows) to see the mark.
 
 ## Traps (each cost real time)
 
+- Windows toolchains under Wine: run them by their `C:\ub\…` path, never
+  Z: — from `Z:\home\…\.unified_base\…` Python's Tcl can't find init.tcl.
+  RubyInstaller's UCRT Ruby aborts "unexpected ucrtbase.dll" on Wine's
+  builtin: it gets Microsoft's (`WINEDLLOVERRIDES=ucrtbase=n,b`). Wine's WMI
+  has no `ExecNotificationQuery` (E_NOTIMPL): COM calls in demos belong
+  inside code that shows a failure in place, not at window creation.
 - Electron 38+ ignores `ELECTRON_OZONE_PLATFORM_HINT`. With
   `XDG_SESSION_TYPE=wayland` it opens on the real Wayland desktop even with
   `WAYLAND_DISPLAY` removed (it finds the default socket): the embed never

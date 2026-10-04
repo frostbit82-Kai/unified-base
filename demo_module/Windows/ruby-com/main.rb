@@ -319,8 +319,13 @@ class ComWindow
     end
     run_action(201)
     run_action(202)
-    @com.watch_processes
-    section('Processes starting (+) and stopping (-) — WMI events, live') { [] }
+    # Inside the section, whose rescue shows a COM failure in place: Wine's
+    # WMI has no event queries (E_NOTIMPL), and that cost the whole window.
+    section('Processes starting (+) and stopping (-) — WMI events, live') do
+      @com.watch_processes
+      []
+    end
+    Win.SetWindowTextW(@buttons[6], Win.w('Watch processes')) unless @com.watching?
     Win.SetTimer(@hwnd, 1, 400, nil)
   end
 
@@ -361,8 +366,7 @@ class ComWindow
         @com.unwatch
         section('Stopped watching processes') { [] }
       else
-        @com.watch_processes
-        section('Watching processes again') { [] }
+        section('Watching processes again') { @com.watch_processes; [] }
       end
       Win.SetWindowTextW(@buttons[6], Win.w(@com.watching? ? 'Stop watching' : 'Watch processes'))
     when 208 then Win.SetWindowTextW(@out, Win.w(''))
