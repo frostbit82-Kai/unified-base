@@ -1255,7 +1255,9 @@ def check_wsl_wrap():
     # a shell line keeps its pipes and gets the startup args as "$@"
     prog, args = main.wsl_shell("ls | wc -l", r"C:\p", ["--x"])
     assert prog == "wsl.exe" and args[-1] == "--x"
-    assert args[args.index("-lc") + 1] == 'ls | wc -l "$@"', args
+    # ... behind the PATH filter that hides Windows' tools from Linux modules
+    assert args[args.index("-lc") + 1] == \
+        main.WSL_LINUX_PATH + 'ls | wc -l "$@"', args
 
 
 def check_wsl_mount_args():
@@ -1269,6 +1271,15 @@ def check_wsl_mount_args():
     assert "stat -c uid=%u,gid=%g /mnt/c" in line, line   # not root-owned
     assert main.wsl_mount_args("/home/me/proj") is None
     assert main.wsl_mount_args(r"\\wsl$\Ubuntu\home\me") is None
+
+
+def check_wsl_setup_hint():
+    """A setup step whose tool is missing in WSL says how to install it, when
+    the package is known (the log only said "skipping it")."""
+    _, args = main.wsl_wrap("cargo", ["build"], "/tmp", setup=True)
+    assert "apt-get install -y cargo" in " ".join(args), args
+    _, args = main.wsl_wrap("ub-no-such-tool", [], "/tmp", setup=True)
+    assert "To install" not in " ".join(args), args
 
 
 def check_npm_setup():
@@ -1294,6 +1305,21 @@ def check_npm_setup():
         assert names() == []
         os.utime(pkg, (3000, 3000))          # a git pull bumped a dependency
         assert names() == ["npm install", "Electron download"], names()
+
+
+def check_php_setup():
+    """composer install only when composer.json asks for something: every
+    PHP demo's just names itself, and with no Composer on the machine each
+    start logged a missing-tool warning."""
+    with tempfile.TemporaryDirectory() as d:
+        p = Path(d)
+        cfg = main.ModuleConfig("n", str(p), "composer (dev server)", runtime="php")
+        (p / "composer.json").write_text('{"name": "demo/x", "description": "d"}')
+        assert main.PhpRuntime.setup_steps(cfg) == []
+        (p / "composer.json").write_text('{"require": {"monolog/monolog": "^3"}}')
+        assert [s[0] for s in main.PhpRuntime.setup_steps(cfg)] == ["composer install"]
+        (p / "composer.json").write_text('{"autoload": {"psr-4": {"App\\\\": "src/"}}}')
+        assert main.PhpRuntime.setup_steps(cfg), "an autoloader needs Composer too"
 
 
 def check_late_window_embeds():
@@ -1615,7 +1641,8 @@ def check_module_wrap():
         prog, args, _ = tab._wrap(*main.shell_command("pip install rich"),
                                   r"C:\proj", {"B": "x y"})
         script = args[args.index("-lc") + 1]
-        assert script.startswith("export B='x y'; pip install rich"), script
+        assert script.startswith(main.WSL_LINUX_PATH + "export B='x y'; "
+                                 "pip install rich"), script
         again = tab._wrap(prog, args, r"C:\proj")
         assert again[:2] == (prog, args), "already-wrapped must pass through"
         tab.shutdown()
@@ -1806,6 +1833,91 @@ def check_force_kill_restart():
     assert hit[-1] == (None, main.SIGKILL), hit
     tab.app_proc = None
     tab.shutdown()
+
+
+def check_reap_container_bridge():
+    """Stop removes a WSL module's container with WSL's docker: a Windows-side
+    `docker rm` addressed another engine, and the container ran on."""
+    _app()
+    tab = main.ModuleTab(main.ModuleConfig(
+        name="d", project_dir=tempfile.gettempdir(),
+        entry="docker build & run", runtime="docker"))
+    calls = []
+
+    class Q:                                   # only startDetached is used
+        @staticmethod
+        def startDetached(prog, args):
+            calls.append((prog, list(args)))
+            return True
+    real_q, real_bf = main.QProcess, main.bridge_for
+    main.QProcess, main.bridge_for = Q, lambda need: "wsl"
+    try:
+        tab._docker_name = "ub-x-1"
+        tab._reap_container()
+    finally:
+        main.QProcess, main.bridge_for = real_q, real_bf
+    tab.shutdown()
+    prog, args = calls[0]
+    assert Path(prog).name.lower() == "wsl.exe", calls
+    assert args[-4:] == ["docker", "rm", "-f", "ub-x-1"], args
+
+
+def check_crash_guard():
+    """An exception in a Qt callback is logged to a file and reported; the
+    launcher lives on. (PyQt6's default aborts — this check would die.)"""
+    app = _app()
+    old_hook = sys.excepthook
+    seen = []
+    with tempfile.TemporaryDirectory() as d:
+        log_file = Path(d) / "unified_base.log"
+        h = main.install_crash_guard(log_file, seen.append)
+        main.logger.removeHandler(main._log_handler)   # keep stderr clean
+        try:
+            main.QTimer.singleShot(0, lambda: 1 / 0)
+            _settle(app, lambda: seen, 3)
+        finally:
+            sys.excepthook = old_hook
+            main.logger.removeHandler(h)
+            main.logger.addHandler(main._log_handler)
+            h.close()
+        assert seen and "ZeroDivisionError" in seen[0], seen
+        assert "ZeroDivisionError" in log_file.read_text(encoding="utf-8")
+
+
+def check_start_guard():
+    """Start on a module that is setting up or running does nothing — F5 used
+    to start a second copy and orphan the first, which Stop never reached.
+    Stop during setup cancels it instead of being greyed out."""
+    app = _app()
+    py = sys.executable.replace("\\", "/")
+    sleep = f'"{py}" -c "import time; time.sleep(30)"'
+    with tempfile.TemporaryDirectory() as d:
+        cfg = main.ModuleConfig(name="g", project_dir=d, entry="",
+                                runtime="custom", embed=False)
+        cfg.custom_setup, cfg.custom_run = sleep, sleep
+        tab = main.ModuleTab(cfg)
+        tab.start()
+        setup = tab.setup_proc
+        assert setup is not None and tab.btn_stop.isEnabled()
+        tab.start()
+        assert tab.setup_proc is setup, "a second start during setup"
+        tab.stop()
+        _settle(app, lambda: tab.status == "stopped", 10)
+        assert tab.status == "stopped" and tab.app_proc is None, tab.status
+        assert setup.state() == main.QProcess.ProcessState.NotRunning
+
+        cfg.custom_setup = ""
+        tab.start()
+        _settle(app, lambda: tab.app_proc is not None and tab.app_proc.state()
+                == main.QProcess.ProcessState.Running, 10)
+        first = tab.app_proc
+        tab.start()
+        assert tab.app_proc is first, "a second start while running"
+        tab.stop()
+        _settle(app, lambda: first.state() ==
+                main.QProcess.ProcessState.NotRunning, 10)
+        assert first.state() == main.QProcess.ProcessState.NotRunning
+        tab.shutdown()
 
 
 @linux_host
@@ -2072,7 +2184,9 @@ if __name__ == "__main__":
                check_proc_table, check_children_walk, check_sampler,
                check_meter_widget, check_log_modes, check_meter_toggles,
                check_bridge_selection, check_wsl_paths, check_wsl_wrap,
-               check_wsl_ready, check_wsl_mount_args, check_npm_setup,
+               check_wsl_ready, check_wsl_mount_args, check_wsl_setup_hint,
+               check_npm_setup,
+               check_php_setup,
                check_late_window_embeds,
                check_wsl_display_env,
                check_frame_restrip, check_embed_refused,
@@ -2083,6 +2197,8 @@ if __name__ == "__main__":
                check_toolchain_preflight, check_proc_text,
                check_cmd_metachar_args, check_wsl_setup_env,
                check_wsl_kill_tree, check_force_kill_restart,
+               check_start_guard, check_crash_guard,
+               check_reap_container_bridge,
                check_wine_family, check_private_wineprefix_boot,
                check_os_badge, check_windows_only_evidence,
                check_wine_runtimes, check_wine_fetch,

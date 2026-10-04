@@ -72,9 +72,9 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Linux: 73 pass. Real Windows: 59
-  pass, 9 skipped as of 2026-10-04 morning; the Linux pass after it added 4
-  portable checks and 1 Linux-host one, so expect 63 pass, 10 skipped.
+- `python test_core.py` (inside `.venv`). Linux: 73 pass (before the
+  Windows bug pass below, which added 5 portable checks). Real Windows: 68
+  pass, 10 skipped (2026-10-04 evening).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
@@ -167,7 +167,31 @@ and stop on Linux. docker-windows explains itself.
 Existing configs keep the platform they were added with: on Windows,
 re-add those demos (or right-click ▸ Runs on ▸ Windows) to see the mark.
 
+**Windows bug pass, 2026-10-04 evening (after pulling the Linux pass).** All
+22 Windows demos: start, embed, Restart, re-embed, Stop, no process left
+behind. The Linux demos through WSL: every one with its toolchain in the
+distro runs (python, python-fractal, node, node-desktop, web, web-worker,
+x11-native embed; docker, docker-multistage print); the rest now say which
+`apt-get` line they need. Fixed, all shared code:
+- F5 / Restart on a running or setting-up module started a second copy
+  and orphaned the first (`start()` refuses now); Stop during setup was
+  greyed out (it cancels now); Ctrl+Shift+R rebuilt a running module's
+  deps, and deleted `build/dist/out` unasked (it confirms now).
+- An exception in any Qt callback aborted the launcher (PyQt6's default):
+  `install_crash_guard` logs it to `.unified_base/unified_base.log` (the
+  only trace on Windows, whose console is hidden) and keeps running.
+- Docker modules never search for a window ("running (output in log)").
+- PHP: no `composer install` for a composer.json that requires nothing.
+
 ## Traps (each cost real time)
+
+- WSL appends Windows' PATH: a Linux module found Windows' mvn, bundle,
+  npm by name (they then fail oddly: "JAVA_HOME not defined"). Every
+  launcher command in WSL starts with `WSL_LINUX_PATH`, which drops
+  `/mnt/<drive>/` entries.
+- Under WSL a web module's *browser* is Windows Edge, our own child: embed
+  it by pid, not by the Linux-window path (it never matched). And Stop's
+  `docker rm` must go through the bridge — WSL's docker, not Windows'.
 
 - Windows toolchains under Wine: run them by their `C:\ub\…` path, never
   Z: — from `Z:\home\…\.unified_base\…` Python's Tcl can't find init.tcl.

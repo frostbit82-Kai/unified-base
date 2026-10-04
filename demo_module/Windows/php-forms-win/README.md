@@ -24,8 +24,8 @@ The Linux README covers POST/redirect/GET, CSRF tokens with
 ## Dependencies
 - PHP 8 for Windows (`winget install -e --id PHP.PHP.8.4`). It needs the
   Visual C++ runtime (`winget install -e --id Microsoft.VCRedist.2015+.x64`).
-- Composer is optional: `vendor/` is committed, so the launcher's
-  `composer install` step is skipped when Composer isn't installed.
+- No Composer: `composer.json` requires no packages, so the launcher runs
+  no `composer install`.
 
 ## Run
 Unified Base runs `php -S localhost:<free port>` here and embeds Edge on it.

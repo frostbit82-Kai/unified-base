@@ -20,6 +20,7 @@ import hashlib
 import json
 import locale
 import logging
+import logging.handlers
 import os
 import platform
 import re
@@ -31,6 +32,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import traceback
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from urllib.parse import unquote
@@ -800,22 +802,36 @@ def wsl_wrap(program: str, args: list, cwd, env: dict | None = None,
         # (exit 127) instead of skipping its step.
         script = "".join(f"export {k}={shlex.quote(to_wsl_path(str(v)))}; "
                          for k, v in (env or {}).items()
-                         if _ENV_NAME.fullmatch(k)) + WSL_SETUP_GUARD
+                         if _ENV_NAME.fullmatch(k)) + wsl_setup_guard(
+            TOOLCHAIN_PKGS.get(Path(str(program)).name, {}).get("apt"))
     elif env:
         argv = ["env"] + [f"{k}={to_wsl_path(str(v))}"
                           for k, v in env.items()] + argv
     head = ["--cd", to_wsl_path(str(cwd))] if cwd else []
-    return "wsl.exe", head + ["--exec", "bash", "-lc", script, "ub"] + argv
+    return "wsl.exe", head + ["--exec", "bash", "-lc", WSL_LINUX_PATH + script,
+                              "ub"] + argv
 
 
 _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")   # safe to `export`
 
-# For setup steps only: a tool missing inside the distro skips its step with a
-# note, exactly as missing_setup_msg does natively, instead of failing the
-# chain. `make` is not in a stock Ubuntu WSL image, for one.
-WSL_SETUP_GUARD = ('command -v "$1" >/dev/null 2>&1 || { echo "Setup step '
-                   "needs '$1', which isn't installed in WSL - skipping it.\"; "
-                   'exit 0; }; exec "$@"')
+# WSL appends Windows' PATH (/mnt/c/...) inside the distro, so a Linux module
+# found Windows tools by name — mvn (Windows Maven's sh script, no Linux java
+# behind it), bundle (Windows Ruby's), npm — and the missing-tool guard took
+# them as installed. Every launcher command in WSL drops those entries; a
+# Windows program is still reachable by its full path.
+WSL_LINUX_PATH = ('PATH=$(printf %s "$PATH" | tr : "\\n" | '
+                  'grep -v "^/mnt/[a-z]/" | paste -sd: -); ')
+
+def wsl_setup_guard(apt_pkgs: str | None) -> str:
+    """For setup steps only: a tool missing inside the distro skips its step
+    with a note — and the install line when the package is known — exactly
+    as missing_setup_msg does natively, instead of failing the chain. `make`
+    is not in a stock Ubuntu WSL image, for one."""
+    hint = (f'echo "    To install it:  wsl -u root apt-get install -y '
+            f'{apt_pkgs}"; ' if apt_pkgs else "")
+    return ('command -v "$1" >/dev/null 2>&1 || { echo "Setup step needs '
+            "'$1', which isn't installed in WSL - skipping it.\"; " + hint +
+            'exit 0; }; exec "$@"')
 
 
 def wsl_kill_script(pid: int, sig: int) -> str:
@@ -834,7 +850,8 @@ def wsl_shell(script: str, cwd, extra: list | None = None,
     pre = 'echo "UBPID:$$"; ' if track_pid else ""
     head = ["--cd", to_wsl_path(str(cwd))] if cwd else []
     return "wsl.exe", head + ["--exec", "bash", "-lc",
-                              f'{pre}{script} "$@"', "ub"] + list(extra or [])
+                              f'{WSL_LINUX_PATH}{pre}{script} "$@"', "ub"] + \
+        list(extra or [])
 
 
 def wsl_mount_args(path: str) -> list | None:
@@ -1527,8 +1544,14 @@ class PhpRuntime(Runtime):
 
     @classmethod
     def setup_steps(cls, cfg):
+        """`composer install` only for a composer.json that asks for
+        something — packages or an autoloader. One that just names the
+        project (every PHP demo's) needs no Composer, and without one
+        installed each start logged a missing-tool warning for nothing."""
         proj = Path(cfg.project_dir)
-        if (proj / "composer.json").is_file():
+        spec = _read_json(proj / "composer.json")
+        if any(spec.get(k) for k in ("require", "require-dev",
+                                     "autoload", "autoload-dev")):
             return [("composer install", "composer", ["install"], str(proj))]
         return []
 
@@ -3394,6 +3417,7 @@ class ModuleTab(QWidget):
         super().__init__(parent)
         self.cfg = cfg
         self.setup_proc: QProcess | None = None
+        self._cancel_setup = False                  # Stop pressed mid-setup
         self.app_proc: QProcess | None = None       # primary process
         self.browser_proc: QProcess | None = None   # web runtime: the browser
         self._web_profile: str | None = None    # its temp profile dir
@@ -3628,7 +3652,7 @@ class ModuleTab(QWidget):
         busy = self.setup_proc is not None and \
             self.setup_proc.state() != QProcess.ProcessState.NotRunning
         self.btn_start.setEnabled(not running and not busy)
-        self.btn_stop.setEnabled(running)
+        self.btn_stop.setEnabled(running or busy)    # busy: cancels the setup
         self.btn_restart.setEnabled(running)
         self.btn_env.setEnabled(not running and not busy)
         self.btn_embed.setEnabled(EMBEDDING_OK and running
@@ -4237,6 +4261,12 @@ class ModuleTab(QWidget):
         return d, venv_python(d)
 
     def start(self):
+        # Already setting up or running: F5 (and any other caller) used to
+        # start a second copy, orphaning the first — Stop reached only the
+        # newest, and the old one ran on untracked.
+        if any(p is not None and p.state() != QProcess.ProcessState.NotRunning
+               for p in (self.setup_proc, self.app_proc)):
+            return
         proj = Path(self.cfg.project_dir)
         if not proj.is_dir():
             self._log(f"Project folder missing: {self.cfg.project_dir}")
@@ -4335,7 +4365,13 @@ class ModuleTab(QWidget):
             if tc and Path(program).name == tc.get("swap"):
                 program = self._wine_tool_win()     # java -> its java.exe
                 env.update(tc.get("env", {}))
-            self._launch_process(program, spec.args, spec.workdir, env)
+            # A container gets no display, so there is never a window to
+            # find — and under WSL the hunt took the next Linux window to open.
+            windowless = self.cfg.runtime == "docker"
+            self._launch_process(program, spec.args, spec.workdir, env,
+                                 embed=False if windowless else None)
+            if windowless:
+                self._set_status("running (output in log)")
         # ponytail: under Wine a Ruby module's Gemfile isn't bundled (the
         # native `bundle` is the wrong Ruby); add a Windows bundle step when a
         # Windows-only Ruby module brings one.
@@ -4432,6 +4468,12 @@ class ModuleTab(QWidget):
             on_ok=launch)
 
     def rebuild_env(self):
+        # Ctrl+Shift+R bypasses the greyed-out button: deleting a running
+        # app's deps under it, then a start() that refuses, left it broken.
+        if any(p is not None and p.state() != QProcess.ProcessState.NotRunning
+               for p in (self.setup_proc, self.app_proc)):
+            self._log("Stop the module first, then Rebuild Env.")
+            return
         if self.cfg.runtime == "python" and self.bridge == "wine":
             shutil.rmtree(self._wine_env_dir(), ignore_errors=True)
             self.start()
@@ -4444,13 +4486,20 @@ class ModuleTab(QWidget):
             self._create_env()
             return
         # Non-python: clear the ecosystem's installed deps / build output,
-        # then start fresh (setup steps will rebuild).
+        # then start fresh (setup steps will rebuild). These are folders in
+        # the user's own project — `build`, `out` may hold real files — so
+        # the list is shown and confirmed first.
         proj = Path(self.cfg.project_dir)
-        for rel in ("node_modules", ".ub_app", ".ub_app.exe", "target",
-                    "build", "dist", "out", CsharpRuntime.WIN_OUT):
-            p = proj / rel
-            if not p.exists():
-                continue
+        doomed = [proj / rel for rel in (
+            "node_modules", ".ub_app", ".ub_app.exe", "target", "build",
+            "dist", "out", CsharpRuntime.WIN_OUT) if (proj / rel).exists()]
+        if doomed and QMessageBox.question(
+                self, "Rebuild Env",
+                "Delete these from the project folder and build them again?"
+                "\n\n" + "\n".join(f"  {p.name}" for p in doomed)) \
+                != QMessageBox.StandardButton.Yes:
+            return
+        for p in doomed:
             self._log(f"Removing {p} ...")
             if p.is_dir():
                 shutil.rmtree(p, ignore_errors=True)
@@ -4549,6 +4598,11 @@ class ModuleTab(QWidget):
 
         def done(code, _status):
             self.setup_proc = None
+            if self._cancel_setup:          # Stop ended it: no launch, no blame
+                self._cancel_setup = False
+                self._log("Setup cancelled.")
+                self._set_status("stopped")
+                return
             if code == 0:
                 on_ok()
             else:
@@ -4773,7 +4827,9 @@ class ModuleTab(QWidget):
         # A WSLg window belongs to msrdc.exe, never to anything we started, so
         # the pid path cannot succeed: go straight to "new window since launch",
         # restricted to the processes that draw Linux windows on Windows.
-        wsl = self.bridge == "wsl"
+        # Not for a web module's browser: that is Edge, our own Windows child,
+        # and the WSL path never took its window — the server in WSL is all.
+        wsl = self.bridge == "wsl" and proc is not self.browser_proc
         wids = [] if wsl else [w for w in windows_for_pids(pids)
                                if w not in _CLAIMED_WINDOWS]
         # Fallback: if the module's window never advertised its pid, grab the
@@ -4938,6 +4994,15 @@ class ModuleTab(QWidget):
         self._kill_browser()
         self._log("Module stopped." if self._stopping
                   else f"Module exited (code {code}).")
+        if code == 127 and self.bridge == "wsl" and not self._stopping:
+            # `env` words it as "No such file" plus a shebang tip: noise.
+            pkgs = TOOLCHAIN_PKGS.get(TOOLCHAIN_CMD.get(self.cfg.runtime, ""),
+                                      {}).get("apt")
+            self._log("Exit 127 is \"command not found\" inside WSL: the "
+                      "program isn't installed in the distro (or wasn't "
+                      "built) — see any setup note above." + (
+                          "\n    This module's toolchain:  wsl -u root "
+                          f"apt-get install -y {pkgs}" if pkgs else ""))
         # A launcher stub (a .bat that `start`s its app, a setup.exe that
         # hands off) can exit while what it started runs on, detached by Wine.
         left = set() if self._stopping else self._wine_family()
@@ -4996,7 +5061,11 @@ class ModuleTab(QWidget):
         if not name:
             return
         self._docker_name = None
-        QProcess.startDetached(resolve_program("docker"), ["rm", "-f", name])
+        # Through the bridge: a module under WSL ran WSL's docker, and a
+        # Windows-side `docker rm` addressed another engine (or none) — the
+        # container ran on after Stop.
+        prog, args, _ = self._wrap("docker", ["rm", "-f", name], None)
+        QProcess.startDetached(resolve_program(prog), args)
 
     def _kill_browser(self):
         if self.browser_proc is not None:
@@ -5019,6 +5088,18 @@ class ModuleTab(QWidget):
             kill_pid(wpid, sig)
 
     def stop(self):
+        s = self.setup_proc
+        if s is not None and s.state() != QProcess.ProcessState.NotRunning:
+            # Mid-setup (an image pull, npm install, a build): Stop cancels
+            # it, and the chain ends in _run_setup's done() before launching.
+            # Under WSL this ends wsl.exe; the distro's side may run on.
+            self._cancel_setup = True
+            self._set_status("stopping")
+            if s.processId() > 0:
+                kill_process_tree(int(s.processId()), SIGKILL)
+            else:
+                s.kill()
+            return
         if self.app_proc is None and self.browser_proc is None:
             return
         self._set_status("stopping")
@@ -6640,6 +6721,37 @@ def selftest() -> int:
     return 1 if fails else 0
 
 
+def install_crash_guard(log_file: Path, report=None) -> logging.Handler | None:
+    """An exception in a Qt callback must not take the launcher down. PyQt6's
+    default aborts the process: every embedded module loses its window while
+    its processes run on untracked, and on Windows (console hidden) the
+    launcher just vanished. Log it — to `log_file` too, since stderr is
+    invisible there — tell `report`, and carry on. Returns the file handler."""
+    handler = None
+    try:
+        log_file.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            log_file, maxBytes=1 << 20, backupCount=1, encoding="utf-8")
+        handler.setLevel(logging.WARNING)
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(message)s"))
+        logger.addHandler(handler)
+    except OSError:
+        pass
+
+    def hook(etype, value, tb):
+        logger.error("Unhandled error:\n" + "".join(
+            traceback.format_exception(etype, value, tb)))
+        if report is not None:
+            try:
+                report(f"Internal error ({etype.__name__}: {value}) — "
+                       f"details in {log_file}")
+            except RuntimeError:          # window already gone
+                pass
+    sys.excepthook = hook
+    return handler
+
+
 def main():
     if "--selftest" in sys.argv:
         sys.exit(selftest())
@@ -6661,6 +6773,8 @@ def main():
     app = QApplication(sys.argv)
     app.setApplicationName("Unified Base")
     win = UnifiedBase()
+    install_crash_guard(APP_DIR / "unified_base.log",
+                        lambda m: win.statusBar().showMessage(m, 20000))
     win.show()
     sys.exit(app.exec())
 
