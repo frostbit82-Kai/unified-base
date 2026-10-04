@@ -787,7 +787,7 @@ TOOLCHAIN_PKGS = {
                "zypper": "nodejs npm", "brew": "node", "winget": "OpenJS.NodeJS"},
     "java":   {"apt": "default-jdk", "dnf": "java-latest-openjdk-devel",
                "pacman": "jdk-openjdk", "zypper": "java-openjdk-devel",
-               "brew": "openjdk", "winget": "EclipseAdoptium.Temurin.21.JDK"},
+               "brew": "openjdk", "winget": "EclipseAdoptium.Temurin.25.JDK"},
     "dotnet": {"apt": "dotnet-sdk-10.0", "dnf": "dotnet-sdk-10.0",
                "pacman": "dotnet-sdk", "zypper": "dotnet-sdk-10.0",
                "brew": "dotnet", "winget": "Microsoft.DotNet.SDK.10"},
@@ -865,10 +865,20 @@ def toolchain_install_cmd(cmd: str) -> str | None:
         return f"winget install -e --id {pkgs}"
     return f"{pm} install {pkgs}"   # brew
 
+def which_fresh(cmd: str) -> str | None:
+    """shutil.which, except that on Windows a miss first re-reads the
+    environment from the registry: a toolchain installed since launch (by
+    winget, an MSI, another shell) is otherwise invisible until a restart."""
+    found = shutil.which(cmd)
+    if found is None and IS_WINDOWS and winplat.refresh_path():
+        found = shutil.which(cmd)
+    return found
+
+
 def missing_toolchain_msg(runtime_id: str) -> str | None:
     """Actionable message if this runtime's toolchain isn't installed, else None."""
     cmd = TOOLCHAIN_CMD.get(runtime_id)
-    if not cmd or shutil.which(cmd):
+    if not cmd or which_fresh(cmd):
         return None
     hint = toolchain_install_cmd(cmd)
     base = f"{runtime_id!r} runtime needs '{cmd}', which isn't on PATH."
@@ -883,7 +893,7 @@ def missing_setup_msg(cmd: str) -> str | None:
     worth saying out loud but not worth blocking on: the dependencies may
     already be satisfied system-wide.
     """
-    if shutil.which(cmd):
+    if which_fresh(cmd):
         return None
     hint = toolchain_install_cmd(cmd)
     base = (f"Setup step needs '{cmd}', which isn't on PATH. Skipping it and "

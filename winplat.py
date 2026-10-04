@@ -485,9 +485,11 @@ def proc_table(pids=None) -> dict:
 
 # --- environment ---------------------------------------------------------------------
 def refresh_path() -> list[str]:
-    """Pull PATH entries added since launch (by a winget install) from the
-    registry. A running process never sees installer PATH changes otherwise,
-    so a freshly installed `node` would still read as missing. Returns the
+    """Pull environment changes made since launch from the registry: PATH
+    entries an installer added, and variables we don't have at all
+    (JAVA_HOME — Maven refuses to run without it). A running process never
+    sees them otherwise, so a freshly installed `node` would still read as
+    missing. Existing variables are never overwritten. Returns the PATH
     entries it added."""
     import winreg
     keys = ((winreg.HKEY_LOCAL_MACHINE,
@@ -499,9 +501,18 @@ def refresh_path() -> list[str]:
     for root, sub in keys:
         try:
             with winreg.OpenKey(root, sub) as k:
-                val, _t = winreg.QueryValueEx(k, "Path")
+                values = [winreg.EnumValue(k, i)
+                          for i in range(winreg.QueryInfoKey(k)[1])]
         except OSError:
             continue
+        val = ""
+        for name, v, _t in values:
+            if not isinstance(v, str):
+                continue
+            if name.lower() == "path":
+                val = v
+            elif name not in os.environ:          # case-insensitive here
+                os.environ[name] = os.path.expandvars(v)
         for part in os.path.expandvars(val).split(os.pathsep):
             norm = part.lower().rstrip("\\")
             if part and norm not in seen:

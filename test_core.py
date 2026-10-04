@@ -1324,6 +1324,23 @@ def check_browser_crop_settles():
     assert w.settle_crop(crop, (8, 29, 7, 8)) == (8, 29, 7, 8)
 
 
+def check_which_fresh():
+    """A toolchain installed after launch (registry PATH, not ours) is found
+    on the next look, not reported missing until a restart."""
+    if not ON_WINDOWS or not shutil.which("node"):
+        return
+    import os
+    saved = os.environ["PATH"]
+    node_dir = os.path.dirname(shutil.which("node")).lower().rstrip("\\")
+    os.environ["PATH"] = os.pathsep.join(
+        p for p in saved.split(os.pathsep) if p.lower().rstrip("\\") != node_dir)
+    try:
+        assert shutil.which("node") is None, "node still on the trimmed PATH"
+        assert main.which_fresh("node"), "registry PATH not re-read"
+    finally:
+        os.environ["PATH"] = saved
+
+
 def check_free_owner():
     """A launcher locked by a dialog that is gone (Edge killed mid-dialog)
     is enabled again; one locked by a dialog still up is left alone."""
@@ -1803,7 +1820,7 @@ if __name__ == "__main__":
                check_row_drag_slack, check_tab_reveals_pane,
                check_compact_header, check_compact_button_intent,
                check_header_never_clips, check_browser_crop_settles,
-               check_free_owner,
+               check_free_owner, check_which_fresh,
                check_module_log_file, check_env_var_editor,
                check_shortcuts, check_geometry_roundtrip,
                check_proc_table, check_children_walk, check_sampler,
