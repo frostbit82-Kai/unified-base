@@ -1900,6 +1900,35 @@ def check_reap_container_bridge():
     assert args[-4:] == ["docker", "rm", "-f", "ub-x-1"], args
 
 
+def check_wsl_turns():
+    """WSL modules started together look for their windows one at a time
+    (a Linux window says nothing of who opened it): the second launches when
+    the first has its window; Stop takes a queued one out; closing the tab
+    holding the turn passes it on."""
+    app = _app()
+    real_bf = main.bridge_for
+    main.bridge_for = lambda need: "wsl"
+    tabs = [main.ModuleTab(main.ModuleConfig(
+        name=f"w{i}", project_dir=tempfile.gettempdir(), entry="",
+        runtime="custom")) for i in range(3)]
+    ran = []
+    try:
+        assert tabs[0]._take_wsl_turn(lambda: ran.append(0))
+        for i in (1, 2):
+            assert not tabs[i]._take_wsl_turn(lambda i=i: ran.append(i))
+        assert "queued" in tabs[1].status and tabs[1].btn_stop.isEnabled()
+        tabs[2].stop()                      # leaves the queue, nothing ran
+        assert not tabs[2]._wsl_queued() and tabs[2].status == "stopped"
+        tabs[0]._end_wsl_turn()             # found its window
+        _settle(app, lambda: ran, 2)
+        assert ran == [1], ran              # tab 1's launch, not tab 2's
+    finally:
+        main.bridge_for = real_bf
+        main._WSL_TURN.update(searching=None, queue=[])
+        for t in tabs:
+            t.shutdown()
+
+
 def check_crash_guard():
     """An exception in a Qt callback is logged to a file and reported; the
     launcher lives on. (PyQt6's default aborts — this check would die.)"""
@@ -2253,7 +2282,7 @@ if __name__ == "__main__":
                check_cmd_metachar_args, check_wsl_setup_env,
                check_wsl_kill_tree, check_force_kill_restart,
                check_start_guard, check_crash_guard,
-               check_reap_container_bridge,
+               check_reap_container_bridge, check_wsl_turns,
                check_wine_family, check_private_wineprefix_boot,
                check_os_badge, check_windows_only_evidence,
                check_wine_runtimes, check_wine_fetch,

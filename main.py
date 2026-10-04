@@ -2503,6 +2503,15 @@ def embed_diagnostics() -> str:
 # neighbour's — java-table's data table came up inside the C# tab.
 _CLAIMED_WINDOWS: set[int] = set()
 
+# Linux windows on a Windows X server all belong to vcxsrv.exe, and Tk or
+# plain-Xlib windows carry no _NET_WM_PID (over TCP the server can't tell
+# either): "new since my launch" is all that ties one to its module. WSL
+# modules started together (a layout) took each other's windows — five at
+# once came out in a full circle. So they take turns: one looks for its
+# window at a time, the next launches once that one has its window, gives
+# up, or stops. Setup still runs in parallel.
+_WSL_TURN: dict = {"searching": None, "queue": []}   # queue: (tab, launch)
+
 
 def windows_for_pids(pids: set[int]) -> list[int]:
     """Return viewable X11 window ids owned by any pid, largest first."""
@@ -2684,8 +2693,10 @@ LINUX_WINDOW_OWNERS = ("msrdc.exe", "vcxsrv.exe", "x410.exe", "xming.exe")
 
 
 def new_windows_since(baseline: set[int], own_pid: int,
-                      max_depth: int = 6, owners=None) -> list[int]:
+                      max_depth: int = 6, owners=None,
+                      skip_owners=()) -> list[int]:
     """Viewable, app-like windows that appeared since `baseline`.
+    (`owners`/`skip_owners` name Windows executables: Windows only.)
 
     Fallback for modules whose window never sets _NET_WM_PID (common with
     SDL/OpenGL apps), so the pid-based lookup can't find them. We pick the
@@ -3730,7 +3741,8 @@ class ModuleTab(QWidget):
         running = self.app_proc is not None and \
             self.app_proc.state() != QProcess.ProcessState.NotRunning
         busy = self.setup_proc is not None and \
-            self.setup_proc.state() != QProcess.ProcessState.NotRunning
+            self.setup_proc.state() != QProcess.ProcessState.NotRunning \
+            or self._wsl_queued()
         self.btn_start.setEnabled(not running and not busy)
         self.btn_stop.setEnabled(running or busy)    # busy: cancels the setup
         self.btn_restart.setEnabled(running)
@@ -4353,7 +4365,7 @@ class ModuleTab(QWidget):
         # start a second copy, orphaning the first — Stop reached only the
         # newest, and the old one ran on untracked.
         if any(p is not None and p.state() != QProcess.ProcessState.NotRunning
-               for p in (self.setup_proc, self.app_proc)):
+               for p in (self.setup_proc, self.app_proc)) or self._wsl_queued():
             return
         proj = Path(self.cfg.project_dir)
         if not proj.is_dir():
@@ -4559,7 +4571,7 @@ class ModuleTab(QWidget):
         # Ctrl+Shift+R bypasses the greyed-out button: deleting a running
         # app's deps under it, then a start() that refuses, left it broken.
         if any(p is not None and p.state() != QProcess.ProcessState.NotRunning
-               for p in (self.setup_proc, self.app_proc)):
+               for p in (self.setup_proc, self.app_proc)) or self._wsl_queued():
             self._log("Stop the module first, then Rebuild Env.")
             return
         if self.cfg.runtime == "python" and self.bridge == "wine":
@@ -4744,12 +4756,39 @@ class ModuleTab(QWidget):
         self._launch_process(str(py), [self.cfg.entry],
                              self.cfg.project_dir, extra)
 
+    def _take_wsl_turn(self, launch) -> bool:
+        """True when this WSL module may launch, and look for its window,
+        now; otherwise `launch` waits its turn (see _WSL_TURN)."""
+        if _WSL_TURN["searching"] in (None, self):
+            _WSL_TURN["searching"] = self
+            return True
+        _WSL_TURN["queue"].append((self, launch))
+        self._set_status("queued — another Linux window is opening")
+        return False
+
+    def _end_wsl_turn(self):
+        """Found its window, gave up, stopped or closed: leave the queue, and
+        if this tab held the turn, launch the next one."""
+        _WSL_TURN["queue"] = [q for q in _WSL_TURN["queue"] if q[0] is not self]
+        if _WSL_TURN["searching"] is not self:
+            return
+        _WSL_TURN["searching"] = None
+        if _WSL_TURN["queue"]:
+            QTimer.singleShot(0, _WSL_TURN["queue"].pop(0)[1])
+
+    def _wsl_queued(self) -> bool:
+        return any(t is self for t, _ in _WSL_TURN["queue"])
+
     def _launch_process(self, program, args, workdir, extra_env=None,
                        embed=None):
         """Start a module process and (optionally) embed its window. Shared
         by every runtime — only the program/args/env differ."""
         if embed is None:
             embed = self.cfg.embed
+        if self.bridge == "wsl" and embed and EMBEDDING_OK and \
+                not self._take_wsl_turn(lambda: self._launch_process(
+                    program, args, workdir, extra_env, embed)):
+            return
         self._set_status("starting")
         p = QProcess(self)
         p.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
@@ -4931,7 +4970,8 @@ class ModuleTab(QWidget):
         if not wids and guessing and (wsl or self._embed_attempts >= 40):
             wids = [w for w in new_windows_since(
                         self._win_baseline, self._own_pid,
-                        owners=LINUX_WINDOW_OWNERS if wsl else None)
+                        owners=LINUX_WINDOW_OWNERS if wsl else None,
+                        skip_owners=() if wsl else LINUX_WINDOW_OWNERS)
                     if w not in _CLAIMED_WINDOWS]
             if wids:
                 self._log("No pid match — embedding a new window that "
@@ -4943,6 +4983,7 @@ class ModuleTab(QWidget):
             self._set_status("running (own window)")
             if wsl:        # its windows are never its own processes'
                 self.embed_timer.stop()
+                self._end_wsl_turn()
                 self._log(f"No embeddable window found after 40 s — panel "
                           "mode. Use the Embed button to retry once the "
                           "window is up.")
@@ -4956,6 +4997,7 @@ class ModuleTab(QWidget):
                       "embedded when it appears (or use the Embed button).")
 
     def _embed(self, wid: int):
+        self._end_wsl_turn()             # its window is chosen: next one's turn
         _CLAIMED_WINDOWS.add(wid)
         self._claimed_wid = wid
         try:
@@ -5079,6 +5121,7 @@ class ModuleTab(QWidget):
 
     def _on_app_finished(self, code, _status):
         self.embed_timer.stop()
+        self._end_wsl_turn()
         self._teardown_embed()
         self._kill_browser()
         self._log("Module stopped." if self._stopping
@@ -5177,6 +5220,10 @@ class ModuleTab(QWidget):
             kill_pid(wpid, sig)
 
     def stop(self):
+        if self._wsl_queued():            # waiting its turn: nothing runs yet
+            self._end_wsl_turn()
+            self._set_status("stopped")
+            return
         s = self.setup_proc
         if s is not None and s.state() != QProcess.ProcessState.NotRunning:
             # Mid-setup (an image pull, npm install, a build): Stop cancels
@@ -5240,6 +5287,7 @@ class ModuleTab(QWidget):
         # timer keep firing (Qt widget access + Xlib calls) after the tab is
         # deleteLater()'d on close — use-after-free that hard-crashes the app.
         self._stopping = True
+        self._end_wsl_turn()
         self._close_log_window()      # or the log widget dies with the window
         if self.sampler is not None:
             self.sampler.set_roots(id(self), [])

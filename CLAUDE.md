@@ -72,8 +72,8 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Linux: 78 pass. Real Windows: 68
-  pass, 10 skipped (2026-10-04 evening).
+- `python test_core.py` (inside `.venv`). Linux: 78 pass (+1 since:
+  `check_wsl_turns`). Real Windows: 69 pass, 10 skipped (2026-10-04 night).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
@@ -202,6 +202,15 @@ x11-native embed; docker, docker-multistage print); the rest now say which
   it by pid, not by the Linux-window path (it never matched). And Stop's
   `docker rm` must go through the bridge — WSL's docker, not Windows'.
 
+- Linux windows on VcXsrv all belong to vcxsrv.exe, and Tk / plain-Xlib
+  ones set no `_NET_WM_PID` (over TCP the server can't tell either; VcXsrv's
+  `vcxsrv_wid_prop_rl` window prop gives the X id, Electron's carry a pid).
+  Five WSL GUI modules started together took each other's windows in a
+  full circle. They now take turns (`_WSL_TURN`): one looks for its window
+  at a time, the next launches once it has it, gives up or stops; setup
+  still runs in parallel. A native module's fallback skips Linux windows.
+  Verified: 5 WSL demos at once, and the user's own 11-module list at once
+  (native + Edge + Electron + WSL), every window in its own tab.
 - Loading a layout starts every module in one go. Two PHP dev servers both
   got :8000 (`free_port` now skips ports it handed out in the last 30 s;
   `Runtime.serves()` answers without reserving one), and two tabs of one

@@ -258,12 +258,13 @@ def _exe_name(pid: int, cache: dict) -> str:
 
 
 def new_windows_since(baseline: set[int], own_pid: int, max_depth: int = 6,
-                      owners=None) -> list[int]:
+                      owners=None, skip_owners=()) -> list[int]:
     """App windows that appeared since `baseline`, largest first.
 
     `owners` narrows it to windows of those executables — msrdc.exe for WSLg —
     which is what keeps a Linux app's window from being confused with
-    whatever a neighbouring module opened at the same moment.
+    whatever a neighbouring module opened at the same moment. `skip_owners`
+    is the reverse: a Windows module's fallback never takes a Linux window.
     """
     names: dict = {}
     cands = []
@@ -274,6 +275,8 @@ def new_windows_since(baseline: set[int], own_pid: int, max_depth: int = 6,
         if pid == own_pid:
             continue
         if owners and _exe_name(pid, names) not in owners:
+            continue
+        if skip_owners and _exe_name(pid, names) in skip_owners:
             continue
         w, hh = window_size(h)
         cands.append((h, w * hh))
