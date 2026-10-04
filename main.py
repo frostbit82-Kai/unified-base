@@ -535,6 +535,18 @@ def wsl_ready() -> bool:
     return False
 
 
+def wsl_x_display() -> str | None:
+    """A Windows X server's DISPLAY for Linux modules — Windows only, see
+    winplat. None leaves them on WSLg, whose windows can't be embedded."""
+    return None
+
+
+def wsl_display_env() -> dict:
+    """Env that sends a Linux module's windows to the Windows X server."""
+    d = wsl_x_display()
+    return {**X11_BACKEND_HINTS, "DISPLAY": d, "WAYLAND_DISPLAY": ""} if d else {}
+
+
 def wine_prefix() -> Path:
     """The Wine prefix modules share. A module can point WINEPREFIX elsewhere
     from its Environment variables, which override this."""
@@ -2794,6 +2806,7 @@ if IS_WINDOWS:
         winplat.tree_from_children)
     _proc_table = winplat.proc_table
     wsl_ready = winplat.wsl_ready
+    wsl_x_display = winplat.wsl_x_display
     kill_pid = winplat.kill_pid
     EmbedHost = winplat.Win32EmbedHost
     TerminalHost = winplat.ConsoleTerminal
@@ -3710,6 +3723,8 @@ class ModuleTab(QWidget):
                 return prog, wargs, {**wenv, **env}     # the module's own wins
             return str(program), args, {"WINEPREFIX": str(wine_prefix()), **env}
         if b == "wsl":
+            if launch:
+                env = {**wsl_display_env(), **env}      # the module's own wins
             if Path(str(program)).name.lower() == "wsl.exe":
                 return str(program), args, {}           # already wrapped
             if _is_cmd_line(str(program), args):        # a shell line: bash
@@ -4276,8 +4291,10 @@ class ModuleTab(QWidget):
             if IS_WINDOWS:
                 # Qt's container would only SetParent again and fail the same.
                 why = (" WSLg windows belong to msrdc.exe, which Windows won't "
-                       "let another program adopt." if self.bridge == "wsl"
-                       else "")
+                       "let another program adopt. To embed Linux windows, "
+                       "run an X server (VcXsrv: -multiwindow -listen tcp) with "
+                       "WSL's networkingMode=mirrored, then Restart."
+                       if self.bridge == "wsl" else "")
                 self._log(f"Can't embed this window: "
                           f"{getattr(e, 'strerror', None) or e}{why} It runs "
                           "in its own window.")
@@ -6013,6 +6030,9 @@ def selftest() -> int:
                              "command -v python3 node cargo java dotnet | "
                              "xargs -n1 basename"])
             row("toolchains inside WSL", None, " ".join(out.split()) or "none")
+            row("Linux windows embed", None,
+                f"yes, X server on {wsl_x_display()}" if wsl_x_display()
+                else "no — WSLg (run VcXsrv + mirrored networking to embed)")
         else:
             row("WSL (Linux modules)", False,
                 "not set up — admin PowerShell: wsl --install, then restart")

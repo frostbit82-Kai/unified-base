@@ -1177,6 +1177,49 @@ def check_wsl_mount_args():
     assert main.wsl_mount_args(r"\\wsl$\Ubuntu\home\me") is None
 
 
+def check_wsl_display_env():
+    """With a Windows X server, a Linux module's launch draws there (its
+    windows embed); without one it stays on WSLg, untouched."""
+    keep = main.wsl_x_display
+    try:
+        main.wsl_x_display = lambda: "127.0.0.1:0"
+        env = main.wsl_display_env()
+        assert env["DISPLAY"] == "127.0.0.1:0" and env["WAYLAND_DISPLAY"] == ""
+        assert env["GDK_BACKEND"] == "x11" and env["QT_QPA_PLATFORM"] == "xcb"
+        main.wsl_x_display = lambda: None
+        assert main.wsl_display_env() == {}
+    finally:
+        main.wsl_x_display = keep
+
+
+def _win32_window(style):
+    """A real top-level HWND (offscreen Qt widgets have none)."""
+    import ctypes
+    import winplat
+    cw = winplat.user32.CreateWindowExW
+    cw.restype = winplat.HWND
+    cw.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_wchar_p,
+                   ctypes.c_uint32] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4
+    return int(cw(0, "STATIC", "ub probe", style, 0, 0, 80, 80,
+                  None, None, None, None))
+
+
+def check_frame_restrip():
+    """VcXsrv puts its frame back just after its window maps; the host sees
+    it and strips it again, instead of a title bar inside the pane."""
+    if not ON_WINDOWS:
+        return
+    from types import SimpleNamespace
+    import winplat as w
+    style = w.WS_POPUP | w.WS_CAPTION | w.WS_THICKFRAME
+    wid = _win32_window(style)
+    stub = SimpleNamespace(child_wid=wid, _style=style, _exstyle=0)
+    assert w.Win32EmbedHost._framed(stub)
+    w.Win32EmbedHost._strip(stub)
+    assert not w.Win32EmbedHost._framed(stub)
+    w.user32.DestroyWindow(w.HWND(wid))
+
+
 def check_embed_refused():
     """A window Windows won't let us adopt (WSLg's msrdc.exe: access denied)
     fails the embed at once with its styles restored, instead of logging
@@ -1187,13 +1230,7 @@ def check_embed_refused():
     import winplat
     from PyQt6.QtWidgets import QWidget
     _app()
-    # A real top-level HWND: offscreen Qt widgets have none.
-    cw = winplat.user32.CreateWindowExW
-    cw.restype = winplat.HWND
-    cw.argtypes = [ctypes.c_uint32, ctypes.c_wchar_p, ctypes.c_wchar_p,
-                   ctypes.c_uint32] + [ctypes.c_int] * 4 + [ctypes.c_void_p] * 4
-    wid = int(cw(0, "STATIC", "ub probe", winplat.WS_POPUP, 0, 0, 80, 80,
-                 None, None, None, None))
+    wid = _win32_window(winplat.WS_POPUP)
     before = winplat._GetLong(wid, winplat.GWL_STYLE)
     keep = winplat.SetParent
 
@@ -1647,7 +1684,8 @@ if __name__ == "__main__":
                check_proc_table, check_children_walk, check_sampler,
                check_meter_widget, check_log_modes, check_meter_toggles,
                check_bridge_selection, check_wsl_paths, check_wsl_wrap,
-               check_wsl_ready, check_wsl_mount_args, check_embed_refused,
+               check_wsl_ready, check_wsl_mount_args, check_wsl_display_env,
+               check_frame_restrip, check_embed_refused,
                check_kill_pid_exited,
                check_wine_wrap, check_detect_platform, check_start_qprocess,
                check_module_wrap, check_wsl_pid_capture,

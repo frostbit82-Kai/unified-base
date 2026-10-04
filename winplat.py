@@ -16,6 +16,7 @@ pure parts, and `main.py --selftest` reports on the rest on a real machine.
 import ctypes
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -269,6 +270,29 @@ def wsl_ready() -> bool:
     except OSError:
         pass
     return False
+
+
+X_SERVERS = ("vcxsrv.exe", "x410.exe", "xming.exe")
+
+
+def wsl_x_display() -> str | None:
+    """DISPLAY that puts a Linux module's windows on a Windows X server.
+
+    WSLg's windows belong to msrdc.exe, which refuses SetParent; an X server
+    on Windows draws ordinary Win32 windows that embed. Only when one is
+    running, and WSL's mirrored networking makes 127.0.0.1 this machine
+    (VcXsrv admits localhost only, via X0.hosts — no -ac)."""
+    try:
+        with open(os.path.join(os.path.expanduser("~"), ".wslconfig"),
+                  encoding="utf-8", errors="replace") as f:
+            mirrored = re.search(r"(?im)^\s*networkingMode\s*=\s*mirrored",
+                                 f.read())
+    except OSError:
+        return None
+    if mirrored and any((p.info["name"] or "").lower() in X_SERVERS
+                        for p in psutil.process_iter(["name"])):
+        return "127.0.0.1:0"
+    return None
 
 
 def embed_diagnostics() -> str:
@@ -529,14 +553,7 @@ class Win32EmbedHost(QWidget):
             ShowWindow(child, SW_RESTORE)
         # Order matters: SetParent's documentation says to clear WS_POPUP and
         # set WS_CHILD *before* reparenting a former desktop window.
-        style = (self._style & ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME
-                                 | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU
-                                 | WS_MAXIMIZE)) | WS_CHILD
-        ex = self._exstyle & ~(WS_EX_APPWINDOW | WS_EX_WINDOWEDGE
-                               | WS_EX_CLIENTEDGE | WS_EX_DLGMODALFRAME
-                               | WS_EX_NOPARENTNOTIFY | WS_EX_TOPMOST)
-        _SetLong(child, GWL_STYLE, style)
-        _SetLong(child, GWL_EXSTYLE, ex)
+        self._strip()
         if not SetParent(child, self._host_wid()):
             err = ctypes.get_last_error() or 5
             _SetLong(child, GWL_STYLE, self._style)     # not a parentless child
@@ -552,6 +569,21 @@ class Win32EmbedHost(QWidget):
                      SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
                      | SWP_NOACTIVATE | keep)
         return 0
+
+    def _strip(self):
+        """Child styles, frame off."""
+        _SetLong(self.child_wid, GWL_STYLE,
+                 (self._style & ~(WS_POPUP | WS_CAPTION | WS_THICKFRAME
+                                  | WS_MINIMIZEBOX | WS_MAXIMIZEBOX
+                                  | WS_SYSMENU | WS_MAXIMIZE)) | WS_CHILD)
+        _SetLong(self.child_wid, GWL_EXSTYLE,
+                 self._exstyle & ~(WS_EX_APPWINDOW | WS_EX_WINDOWEDGE
+                                   | WS_EX_CLIENTEDGE | WS_EX_DLGMODALFRAME
+                                   | WS_EX_NOPARENTNOTIFY | WS_EX_TOPMOST))
+
+    def _framed(self) -> bool:
+        s = _signed(_GetLong(self.child_wid, GWL_STYLE))
+        return not s & WS_CHILD or bool(s & (WS_CAPTION | WS_THICKFRAME))
 
     def _pixel_size(self) -> tuple[int, int]:
         r = self.devicePixelRatioF()
@@ -599,6 +631,13 @@ class Win32EmbedHost(QWidget):
             return False
         if not self.verify():
             self._attach()
+        elif self._framed():
+            # The app put its frame back: VcXsrv does, just after its window
+            # maps — a Linux app embedded with its own title bar inside.
+            self._strip()
+            SetWindowPos(self.child_wid, None, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER
+                         | SWP_FRAMECHANGED | SWP_NOACTIVATE)
         return True
 
     def _heal_tick(self):
