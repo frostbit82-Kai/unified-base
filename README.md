@@ -1,7 +1,5 @@
 # Unified Base
 
-python -m kai.unify + launching Unified Base gives you Kai-OS as a real embedded browser tab in your desktop shell
-
 A tabbed shell that hosts standalone GUI modules written in any of several
 popular languages. Each module lives in its own project folder, gets its own
 isolated environment, and runs as its own process — embedded into a tab when
