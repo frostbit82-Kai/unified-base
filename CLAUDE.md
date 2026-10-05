@@ -123,8 +123,9 @@ user's to run — hand them the command; never type a password.
   machine.
 - `python test_core.py` (inside `.venv`). Linux: 92 pass (2026-10-05, on
   PySide6, 0.9.2). Real Windows: 79 pass, 13 skipped (2026-10-05).
-  Under Wine `check_proc_table` and `check_sampler` fail only because Wine
-  reports no CPU time / parent for other processes. The run uses a
+  Under Wine 10.0 on PySide6-Essentials 6.9.3: 78 pass, 14 skipped
+  (2026-10-05) — `check_sampler` skips itself there (`UNDER_WINE`: Wine
+  reports no CPU time for other processes). The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
   `tmp*-<hash>.log` per module tab in the real `.unified_base\logs` —
   safe to delete there.
@@ -375,9 +376,17 @@ process list shows whatever runs, claude.exe included).
 - Testing: PrintWindow on an embedded child needs the *parent's* thread
   pumping — a harness that blocks on its capture subprocess deadlocks.
 
-- Qt 6.11 needs Windows 10 1809+ (system ICU); Wine lacks it, so Wine tests
-  pinned `PyQt6==6.9.1`. Since the PySide6 move the equivalent would be
-  `PySide6-Essentials==6.9.*` — not yet tried under Wine.
+- Qt 6.10+ links Windows' own ICU (`icuuc.dll`), which Wine lacks: 6.11.2
+  fails with "DLL load failed while importing QtCore". Wine runs use
+  `PySide6-Essentials==6.9.*` (tried 2026-10-05, 6.9.3 on Wine 10.0):
+  test_core passes, `--selftest` embeds, and the GUI loads the Windows
+  demos and runs python-winapi embedded. Rig: Python 3.12's installer
+  (`WINE_TOOLCHAINS["python"]`) into a scratch `WINEPREFIX` under
+  `~/.cache` (/tmp has a quota), a venv with that pin and psutil, a nested
+  Xvfb. 6.9 raises a Qt callback's exception out of `processEvents()`
+  instead of calling `sys.excepthook` (`exec()` is fine on both), so
+  `check_crash_guard` runs a real `QEventLoop`. Close All under Wine takes
+  a few seconds: Wine ends processes slowly.
 - Never call `super().nativeEvent()` from an override — it spun forever;
   return `(False, 0)`, which is all QWidget's does.
 - Win32: set `WS_CHILD` / clear `WS_POPUP` *before* `SetParent`; ctypes needs

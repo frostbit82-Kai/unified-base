@@ -38,6 +38,9 @@ _use_app_dir(_SANDBOX)
 
 _APP = None
 ON_WINDOWS = main.IS_WINDOWS     # the real host; _as_windows() only pretends
+# Windows code on Linux: run with PySide6-Essentials 6.9 (CLAUDE.md)
+UNDER_WINE = ON_WINDOWS and hasattr(__import__("ctypes").WinDLL("ntdll"),
+                                    "wine_get_version")
 LINUX_HOST = set()
 
 
@@ -2124,8 +2127,11 @@ def check_wsl_turns():
 
 def check_crash_guard():
     """An exception in a Qt callback is logged to a file and reported; the
-    launcher lives on. (PyQt6's default aborted — this check would have died.)"""
-    app = _app()
+    launcher lives on. (PyQt6's default aborted — this check would have died.)
+    A real event loop, as the app runs: PySide6 6.9 (what Wine runs) raises
+    a callback's exception out of processEvents() instead."""
+    from PySide6.QtCore import QEventLoop
+    _app()
     old_hook = sys.excepthook
     seen = []
     with tempfile.TemporaryDirectory() as d:
@@ -2133,8 +2139,10 @@ def check_crash_guard():
         h = main.install_crash_guard(log_file, seen.append)
         main.logger.removeHandler(main._log_handler)   # keep stderr clean
         try:
+            loop = QEventLoop()
             main.QTimer.singleShot(0, lambda: 1 / 0)
-            _settle(app, lambda: seen, 3)
+            main.QTimer.singleShot(300, loop.quit)
+            loop.exec()
         finally:
             sys.excepthook = old_hook
             main.logger.removeHandler(h)
@@ -2775,6 +2783,10 @@ if __name__ == "__main__":
                check_x11_hints):
         if ON_WINDOWS and fn in LINUX_HOST:
             print(f"skip {fn.__name__} (Linux host only)")
+            continue
+        if UNDER_WINE and fn is check_sampler:
+            print(f"skip {fn.__name__} (Wine reports no CPU time for other "
+                  "processes)")
             continue
         _use_app_dir(_SANDBOX)      # a check may have left it on its own temp dir
         fn()
