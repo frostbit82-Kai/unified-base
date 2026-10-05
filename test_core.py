@@ -2286,7 +2286,17 @@ def check_windows_only_evidence():
 def check_wine_runtimes():
     """On Linux a Windows-only module crosses over (C#, Rust: build a Windows
     .exe here; Python, Java, Ruby: their Windows toolchain in the prefix) or
-    says why it can't (Node/PHP, Windows containers)."""
+    says why it can't (Node/PHP, Windows containers). As if Wine were
+    installed: without it (the CI runner) every one only says to install it."""
+    keep = main.wine_program
+    main.wine_program = lambda: keep() or "/usr/bin/wine"
+    try:
+        _check_wine_runtimes()
+    finally:
+        main.wine_program = keep
+
+
+def _check_wine_runtimes():
     _app()
     rust = main.ModuleConfig(name="s", project_dir="/p", runtime="binary",
                              entry=main.BinaryRuntime.CARGO, platform="windows")
