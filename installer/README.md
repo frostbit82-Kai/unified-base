@@ -164,6 +164,17 @@ What the setup does:
 - **Inno's preprocessor un-doubles `""` inside `"..."`**: defines holding
   quoted arguments use single quotes.
 
+### Languages on demand
+
+The package carries Python only. A module's first start downloads the
+language it needs into `%USERPROFILE%\.unified_base\toolchains`, per user:
+`WINDOWS_TOOLCHAINS` in `main.py` (Node, .NET SDK, Temurin + Maven, rustup's
+GNU host, RubyInstaller, PHP), pinned and SHA-256-checked, the same
+mechanism as Linux's `USER_TOOLCHAINS`. The uninstaller's delete-data
+answer runs the fetched Ruby's own uninstaller first (it registers itself
+under Installed Apps); rustup's `~\.cargo` and `~\.rustup` stay, as on
+Linux.
+
 ### Testing on a clean Windows
 
 Windows Sandbox (Windows Pro; the "Windows Sandbox" feature) is a throwaway
@@ -182,7 +193,9 @@ behind a Linux module's **Set up WSL** button. It checks the Windows build
 virtualization (a running hypervisor counts: with Hyper-V on, the CPU reports
 its virtualization as off), WSL and a default distro that is not
 `docker-desktop` (`wsl --install -d Ubuntu`, which raises its own UAC prompt),
-python3-venv and python3-tk in the distro, VcXsrv (`winget install
+python3-venv, python3-tk, gcc (Rust's linker) and the GUI libraries Electron,
+Swing and Avalonia load (GTK, NSS, gbm, ALSA — `libasound2t64` on 24.04+,
+where the old name has two providers) in the distro, VcXsrv (`winget install
 marha.VcXsrv`), and `networkingMode=mirrored` in `.wslconfig` (backed up,
 then `wsl --shutdown` if the user agrees). It asks before each change.
 

@@ -102,19 +102,26 @@ try {
     }
     Ok "WSL, running $default"
 
-    # -- Python inside the distro -----------------------------------------
-    # The Python demos need venv and Tk; every other language's module says
-    # what it needs in its own log.
-    $pkgs = 'python3-venv python3-tk'
-    & wsl.exe -d $default -u root --cd / -- sh -c "command -v apt-get >/dev/null && ! dpkg -s $pkgs >/dev/null 2>&1"
+    # -- Python, a C compiler and GUI libraries inside the distro ---------
+    # venv and Tk for the Python demos; gcc because Rust links with the
+    # system's cc on Linux; GTK, NSS, gbm and ALSA for Electron, which also
+    # cover what Java's Swing and Avalonia load. The languages themselves
+    # (Node, .NET, Java, Rust) download on a module's first start.
+    # Ubuntu 24.04 renamed ALSA's library (t64), and libasound2 then names
+    # two packages. No double quotes below: PowerShell 5.1 mangles them in
+    # arguments to wsl.exe.
+    $pkgs = 'python3-venv python3-tk gcc libgtk-3-0 libnss3 libgbm1 libxtst6 libxi6'
+    $alsa = 'a=libasound2; apt-cache show libasound2t64 >/dev/null 2>&1 && a=libasound2t64; '
+    & wsl.exe -d $default -u root --cd / -- sh -c ($alsa + 'command -v apt-get >/dev/null && { apt-get install -s -q ' + $pkgs + ' $a >/tmp/ub-apt 2>&1 || exit 0; grep -q ^Inst /tmp/ub-apt; }')
     if ($LASTEXITCODE -eq 0) {
-        Todo "Python modules need $pkgs inside $default."
+        Todo "Linux modules need Python's venv and Tk, a C compiler (gcc) and the libraries"
+        Note "GUI programs load (GTK and others) inside $default - about 250 MB."
         if (Ask "Install them now (apt-get, as root inside $default)?") {
-            & wsl.exe -d $default -u root --cd / -- sh -c "apt-get update -q && apt-get install -y -q $pkgs"
-            if ($LASTEXITCODE -eq 0) { Ok "Python for Linux modules ($pkgs)" }
+            & wsl.exe -d $default -u root --cd / -- sh -c ('apt-get update -q || exit 1; ' + $alsa + 'apt-get install -y -q ' + $pkgs + ' $a')
+            if ($LASTEXITCODE -eq 0) { Ok 'Python, gcc and GUI libraries for Linux modules' }
             else { Bad "apt-get failed (exit $LASTEXITCODE) - the output above says why." }
         }
-    } else { Ok 'Python for Linux modules' }
+    } else { Ok 'Python, gcc and GUI libraries for Linux modules' }
 
     if ($embed) {
         # -- VcXsrv: the X server Linux windows embed through --------------
@@ -169,8 +176,8 @@ try {
     Write-Host ''
     Write-Host 'Done.' -ForegroundColor Cyan
     Note 'In Unified Base: File > Load Demo Modules, then start a module in the Linux group.'
-    Note 'A Linux module installs its own libraries; when a language itself is missing in'
-    Note "$default, its log gives the one command to run (wsl -u root apt-get install ...)."
+    Note "Node, .NET, Java and Rust download into $default the first time a Linux module"
+    Note 'needs one. For Ruby or PHP, the module''s log gives the one apt-get line to run.'
     if ($embed) {
         Note 'The first Linux window starts VcXsrv. If Windows Firewall asks about'
         Note '"VcXsrv windows xserver", choose Allow: WSL reaches it on this PC.'

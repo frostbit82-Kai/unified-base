@@ -542,29 +542,76 @@ WINE_NEEDS_WINDOWS_TOOLCHAIN = {"node": "Node.js", "web": "Node.js", "php": "PHP
 
 # Fetches one pinned download (run by the launcher's own Python as a logged
 # setup step): download unless the cached copy matches, refuse a file whose
-# SHA-256 differs from the pin, then optionally unzip all of it (minus the top
-# folder) or one member into a folder. A .tar.* (USER_TOOLCHAINS) unpacks
-# beside the folder and is then moved into place, so a half-unpacked
-# toolchain never looks installed; the archive is deleted after, as the
-# unpacked folder is the copy kept.
+# SHA-256 differs from the pin, then optionally unpack all of it (minus the
+# top folder its members share, if they share one: .NET's and PHP's zips
+# have none) or one zip member into a folder. Unpacking all of it goes beside
+# the folder first and is then moved into place, so a half-unpacked toolchain
+# never looks installed; the archive is deleted after, as the unpacked folder
+# is the copy kept.
 # ponytail: needs sys.executable to be a Python — a frozen build needs another runner.
 FETCH = r"""
-import hashlib, os, shutil, sys, tarfile, urllib.request, zipfile
+import hashlib, os, shutil, subprocess, sys, tarfile, time, zipfile
+import urllib.request
 url, dest, sha = sys.argv[1:4]
 def digest(p):
+    # not hashlib.file_digest: a WSL distro's python3 may be 3.10
+    h = hashlib.sha256()
     with open(p, "rb") as f:
-        return hashlib.file_digest(f, "sha256").hexdigest()
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+def top(names):
+    # length of the folder every member is in ("." in .NET's tarball), or 0
+    t = names[0].partition("/")[0] if names else ""
+    return len(t) + 1 if any("/" in n for n in names) and all(
+        n == t or n.startswith(t + "/") for n in names) else 0
+def long(p):
+    # Windows: past 260 characters only as \\?\C:\... (.NET's SDK has
+    # 145-character paths of its own)
+    return "\\\\?\\" + p if os.name == "nt" and p[1:2] == ":" else p
+def move(src, dst):
+    # Windows: an antivirus still scanning a new file blocks the rename
+    for i in range(30):
+        try:
+            shutil.rmtree(long(dst), ignore_errors=True)
+            return os.replace(long(src), long(dst))
+        except PermissionError:
+            if i == 29:
+                raise
+            time.sleep(1)
 if not (os.path.isfile(dest) and digest(dest) == sha):
     print("Downloading " + url, flush=True)
     part = dest + ".part"
-    with urllib.request.urlopen(url, timeout=60) as r, open(part, "wb") as f:
-        total, got, shown = int(r.headers.get("Content-Length") or 0), 0, 0
-        while chunk := r.read(1 << 20):
-            f.write(chunk)
-            got += len(chunk)
-            if total and got * 10 // total > shown:
-                shown = got * 10 // total
-                print(f"  {shown * 10}% of {total >> 20} MB", flush=True)
+    for attempt in range(3):            # a dropped connection or DNS blip
+        try:
+            with urllib.request.urlopen(url, timeout=60) as r, \
+                    open(part, "wb") as f:
+                total, got, shown = int(r.headers.get("Content-Length") or 0), 0, 0
+                while chunk := r.read(1 << 20):
+                    f.write(chunk)
+                    got += len(chunk)
+                    if total and got * 10 // total > shown:
+                        shown = got * 10 // total
+                        print(f"  {shown * 10}% of {total >> 20} MB", flush=True)
+            break
+        except OSError as e:
+            curl = os.path.join(os.environ.get("SystemRoot", ""), "System32",
+                                "curl.exe")
+            if "CERTIFICATE_VERIFY_FAILED" in str(e) and os.path.isfile(curl):
+                # A fresh Windows fetches a root certificate the first time
+                # its own TLS needs one; Python reads the store as it is.
+                # Windows' curl uses that TLS. The checksum still decides.
+                print("  Windows does not have this site's root certificate "
+                      "yet - downloading with curl.exe, which fetches it",
+                      flush=True)
+                if subprocess.call([curl, "-fsSL", "--retry", "3", "-o", part,
+                                    url]) == 0:
+                    break
+            if attempt == 2:
+                sys.exit(f"Download failed: {e}. Check the connection, then "
+                         "Start again.")
+            print(f"  {e} - trying again", flush=True)
+            time.sleep(5)
     if digest(part) != sha:
         os.remove(part)
         sys.exit(f"Checksum mismatch: {url} is not the pinned file. Nothing "
@@ -576,28 +623,35 @@ if len(sys.argv) > 4 and ".tar." in os.path.basename(dest):
     shutil.rmtree(part, ignore_errors=True)
     print("Unpacking...", flush=True)
     with tarfile.open(dest) as t:
-        keep = [m.replace(name=m.name.partition("/")[2], deep=False)
-                for m in t.getmembers() if m.name.partition("/")[2]]
+        members = t.getmembers()
+        k = top([m.name for m in members])
+        keep = [m.replace(name=m.name[k:], deep=False)
+                for m in members if m.name[k:]]
         t.extractall(part, members=keep, filter="data")
-    shutil.rmtree(out, ignore_errors=True)
-    os.replace(part, out)
+    move(part, out)
     os.remove(dest)
     print("Unpacked into " + out, flush=True)
 elif len(sys.argv) > 4:
     out, member = os.path.abspath(sys.argv[4]), (sys.argv[5:] or [None])[0]
+    into = out if member else out + ".part"
+    if not member:
+        print("Unpacking...", flush=True)
+        shutil.rmtree(long(into), ignore_errors=True)
     with zipfile.ZipFile(dest) as z:
-        for m in z.infolist():
-            if member and m.filename != member:
-                continue
+        infos = [m for m in z.infolist() if not member or m.filename == member]
+        k = 0 if member else top([m.filename for m in infos])
+        for m in infos:
             # one member by its own name, or everything minus the top folder
-            name = (os.path.basename(member) if member
-                    else m.filename.partition("/")[2])
-            path = os.path.abspath(os.path.join(out, name))
-            if m.is_dir() or not name or not path.startswith(out + os.sep):
+            name = os.path.basename(member) if member else m.filename[k:]
+            path = os.path.abspath(os.path.join(into, name))
+            if m.is_dir() or not name or not path.startswith(into + os.sep):
                 continue
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with z.open(m) as src, open(path, "wb") as dst:
+            os.makedirs(long(os.path.dirname(path)), exist_ok=True)
+            with z.open(m) as src, open(long(path), "wb") as dst:
                 shutil.copyfileobj(src, dst)
+    if not member:
+        move(into, out)
+        os.remove(dest)
     print("Unpacked into " + out, flush=True)
 """
 
@@ -606,17 +660,29 @@ elif len(sys.argv) > 4:
 # the step makes) appeared meanwhile: two tabs of one Windows language started
 # together (a layout) raced the same download, and would run one installer
 # twice into C:\ub\<dir>, rewriting DLLs the first tab's program has loaded.
-# Linux only, as is everything Wine.
 ONCE = r"""
-import fcntl, os, subprocess, sys
+import os, subprocess, sys, time
+try:
+    import fcntl
+    def trylock(f):
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+except ImportError:                     # Windows
+    import msvcrt
+    def trylock(f):
+        msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
 lock, marker, cmd = sys.argv[1], sys.argv[2], sys.argv[3:]
 with open(lock, "w") as f:
-    try:
-        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        print("Waiting for another module setting up the same toolchain...",
-              flush=True)
-        fcntl.flock(f, fcntl.LOCK_EX)
+    waited = False
+    while True:
+        try:
+            trylock(f)
+            break
+        except OSError:
+            if not waited:
+                print("Waiting for another module setting up the same "
+                      "toolchain...", flush=True)
+                waited = True
+            time.sleep(1)
     if os.path.exists(marker):
         print("Already done by another module.", flush=True)
         sys.exit(0)
@@ -640,6 +706,9 @@ with open(lock, "w") as f:
 #            files can raise it (toolchain_floor)
 #   env    — set while it is in use; "" is its folder
 #   rustup — the download is rustup-init, which installs Rust into ~/.cargo
+#   install — the download is an installer, run with these arguments
+#            ({dir} = the toolchain's folder); else an archive, unpacked
+#   exe    — Windows: the file that proves it is there (cmd plus extension)
 USER_TOOLCHAINS = {
     "node": {
         "label": "Node.js 24.21 LTS", "mb": 31, "cmd": "node", "bin": "bin",
@@ -676,6 +745,8 @@ USER_TOOLCHAINS = {
                "x86_64-unknown-linux-gnu/rustup-init",
         "sha256": "dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71",
         "floor": (1, 80), "rustup": True,
+        "install": ["-y", "--no-modify-path", "--profile", "minimal"],
+        "installing": "installing Rust with rustup (~100 MB more)",
     },
     "wine": {
         "label": "Wine 11.0", "mb": 70, "cmd": "wine", "bin": "bin",
@@ -685,11 +756,120 @@ USER_TOOLCHAINS = {
         "floor": (10,),             # the oldest Wine the Windows demos ran on
     },
 }
-USER_TOOLCHAINS_OK = IS_LINUX and platform.machine() == "x86_64"
 
-# Runs a downloaded program (rustup-init) after making it executable.
-RUN_DOWNLOADED = ("import os, sys; os.chmod(sys.argv[1], 0o755); "
-                  "os.execv(sys.argv[1], sys.argv[1:])")
+# The same on Windows (x64), where the alternative is winget: it installs
+# Node, .NET and Temurin for all users behind a UAC prompt, has no Maven,
+# and is missing on some PCs (Windows Sandbox, Server, LTSC). Zips, plus
+# rustup's GNU host — it links with its own MinGW; the MSVC host needs Visual
+# Studio — and Ruby and PHP, which Linux takes from its package manager.
+# Into %USERPROFILE%\.unified_base\toolchains, no UAC. Each checked against
+# its publisher's SHA-256/512 (PHP's in windows.php.net's releases.json),
+# 2026-10-05. PHP's pin is the archives URL: the plain one moves there when
+# the next 8.4 release comes out.
+WINDOWS_TOOLCHAINS = {
+    "node": {"url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-win-x64.zip",
+             "sha256": "158f7685b44de51f6c0df1d153526cbcd3e1bc739a8dfc607721cef75de9e541",
+             "mb": 36, "bin": "", "exe": "node.exe"},
+    "dotnet": {"url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/"
+                      "dotnet-sdk-10.0.401-win-x64.zip",
+               "sha256": "c1b96dea223e1ab2af8a51187e0cc96338d14c68834be1656136be18953cea09",
+               "mb": 287, "exe": "dotnet.exe"},
+    "java": {"url": WINE_TOOLCHAINS["java"]["url"],
+             "sha256": WINE_TOOLCHAINS["java"]["sha256"], "exe": "java.exe"},
+    "mvn": {"url": "https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/"
+                   "apache-maven-3.9.16-bin.zip",
+            "sha256": "5af3b743dd8b876b5c45da33b676251e5f1687712644abb4ee519ca56e1d89ce",
+            "exe": "mvn.cmd"},
+    "cargo": {"url": "https://static.rust-lang.org/rustup/archive/1.29.1/"
+                     "x86_64-pc-windows-gnu/rustup-init.exe",
+              "sha256": "6d5b5709addc0122c916d8c810da8d8a7b086a5d64fa805ef404d506392aadc8",
+              "mb": 14, "exe": "cargo.exe",
+              "install": ["-y", "--no-modify-path", "--profile", "minimal",
+                          "--default-host", "x86_64-pc-windows-gnu"]},
+    "ruby": {"label": "Ruby 3.4 (RubyInstaller)", "mb": 20, "cmd": "ruby",
+             "bin": "bin", "exe": "ruby.exe", "floor": (3, 0),
+             "url": WINE_TOOLCHAINS["ruby"]["url"],
+             "sha256": WINE_TOOLCHAINS["ruby"]["sha256"],
+             # per user; no PATH change, file associations or Start menu
+             "install": ["/verysilent", "/currentuser", "/dir={dir}", "/tasks=",
+                         "/noicons"]},
+    "php": {"label": "PHP 8.4", "mb": 34, "cmd": "php", "bin": "", "exe": "php.exe",
+            "url": "https://windows.php.net/downloads/releases/archives/"
+                   "php-8.4.26-nts-Win32-vs17-x64.zip",
+            "sha256": "da68394f9193b7f6b89d0c76861a4034ae10efee7fd55a7255d8118c2acf70d7",
+            "floor": (8, 1)},
+}
+LINUX_TOOLCHAINS = USER_TOOLCHAINS     # on Windows, what WSL fetches
+if IS_WINDOWS:
+    USER_TOOLCHAINS = {n: {**USER_TOOLCHAINS.get(n, {}), **w}
+                       for n, w in WINDOWS_TOOLCHAINS.items()}
+USER_TOOLCHAINS_OK = platform.machine() in ("x86_64", "AMD64") and \
+    (IS_LINUX or IS_WINDOWS)
+
+# The extensions the fetched PHP loads (its zip has no php.ini, so none):
+# what composer and small apps expect, and COM for Windows.
+PHP_EXTENSIONS = ["curl", "fileinfo", "mbstring", "openssl", "pdo_sqlite",
+                  "sqlite3", "zip", "com_dotnet"]
+
+# Runs a downloaded program (rustup-init, an installer) after making it
+# executable, and waits for it: Windows' execv returns at once.
+RUN_DOWNLOADED = ("import os, subprocess, sys; os.chmod(sys.argv[1], 0o755); "
+                  "sys.exit(subprocess.call(sys.argv[1:]))")
+
+# A Linux module on Windows runs in WSL, whose distro lags as an LTS Linux
+# does (Ubuntu 24.04: Node 18, Rust 1.75, no .NET 10). The same fetch, run
+# inside the distro as its first setup step, by its own python3: argv is
+# FETCH, ONCE and the LINUX_TOOLCHAINS entries the module needs (floor
+# already raised by the project). Into ~/.unified_base/toolchains there;
+# WSL_LINUX_PATH puts them first on PATH for every WSL command.
+WSL_ENSURE = r"""
+import json, os, re, shutil, subprocess, sys
+fetch, once, spec = sys.argv[1], sys.argv[2], json.loads(sys.argv[3])
+base = os.path.expanduser("~/.unified_base")
+def version(cmd, path):
+    # as tool_version on the Windows side
+    args = {"java": ["-version"], "dotnet": ["--list-sdks"],
+            "mvn": ["-v"]}.get(cmd, ["--version"])
+    try:
+        r = subprocess.run([path, *args], capture_output=True, text=True,
+                           timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    found = [(int(a), int(b))
+             for a, b in re.findall(r"(\d+)\.(\d+)", r.stdout + r.stderr)]
+    if cmd == "dotnet":
+        return max(found) if found else (0,)
+    return found[0] if found else None
+for tc in spec:
+    home = (os.environ.get("CARGO_HOME") or os.path.expanduser("~/.cargo")
+            if tc.get("rustup") else os.path.join(base, "toolchains", tc["name"]))
+    marker = os.path.join(home, tc["bin"], tc["cmd"])
+    if os.path.exists(marker):
+        continue
+    path, need = shutil.which(tc["cmd"]), tuple(tc["floor"])
+    have = version(tc["cmd"], path) if path else None
+    if path and (have is None or have >= need):
+        continue
+    why = (f"{tc['cmd']} here is {'.'.join(map(str, have))}, older than the "
+           f"{'.'.join(map(str, need))}+ it needs" if path
+           else f"{tc['cmd']} isn't installed")
+    print(f"{tc['label']} in WSL: {why}. Fetching it for your Linux user (no "
+          f"password needed), once - into {home}.", flush=True)
+    cache = os.path.join(base, "downloads")
+    os.makedirs(cache, exist_ok=True)
+    os.makedirs(os.path.join(base, "toolchains"), exist_ok=True)
+    lock = os.path.join(cache, tc["name"] + ".lock")
+    file = os.path.join(cache, tc["url"].rsplit("/", 1)[-1])
+    def step(*cmd):
+        if subprocess.call([sys.executable, "-c", once, lock, marker, *cmd]):
+            sys.exit(1)
+    step(sys.executable, "-c", fetch, tc["url"], file, tc["sha256"],
+         *([] if tc.get("install") else [home]))
+    if tc.get("install"):
+        print(tc.get("installing", "installing " + tc["label"]), flush=True)
+        os.chmod(file, 0o755)
+        step(file, *tc["install"])
+"""
 
 
 def user_toolchain_dir(name: str) -> Path:
@@ -701,8 +881,27 @@ def user_toolchain_dir(name: str) -> Path:
 
 
 def user_toolchain_ready(name: str) -> bool:
+    return user_toolchain_marker(name).is_file()
+
+
+def user_toolchain_marker(name: str) -> Path:
+    """The file a fetched toolchain is there once it exists."""
     tc = USER_TOOLCHAINS[name]
-    return (user_toolchain_dir(name) / tc["bin"] / tc["cmd"]).is_file()
+    return user_toolchain_dir(name) / tc["bin"] / tc.get("exe", tc["cmd"])
+
+
+def finish_php(home: Path) -> None:
+    """The PHP zip has no php.ini, and php.exe needs the VC++ runtime, which
+    a clean Windows lacks: the copy beside this Python is that same
+    redistributable DLL. extension_dir is absolute — a relative one is read
+    from the working directory."""
+    ini = home / "php.ini"
+    if not ini.is_file():
+        ini.write_text(f'extension_dir = "{home / "ext"}"\n'
+                       + "".join(f"extension={e}\n" for e in PHP_EXTENSIONS))
+    dll = Path(sys.base_prefix) / "vcruntime140.dll"
+    if dll.is_file() and not (home / dll.name).is_file():
+        shutil.copy2(dll, home / dll.name)
 
 
 def activate_user_toolchains() -> None:
@@ -718,6 +917,8 @@ def activate_user_toolchains() -> None:
         if not user_toolchain_ready(name):
             continue
         home = user_toolchain_dir(name)
+        if name == "php" and IS_WINDOWS:
+            finish_php(home)
         b = str(home / tc["bin"])
         if b in path:
             path.remove(b)
@@ -738,8 +939,12 @@ def tool_version(cmd: str, path: str) -> tuple | None:
         args = {"java": ["-version"], "dotnet": ["--list-sdks"],
                 "mvn": ["-v"]}.get(cmd, ["--version"])
         try:
+            # No console window: under pythonw (the Windows shortcut) each
+            # console program run from here would open one.
             r = subprocess.run([path, *args], capture_output=True, text=True,
-                               timeout=30)
+                               timeout=30, stdin=subprocess.DEVNULL,
+                               creationflags=getattr(subprocess,
+                                                     "CREATE_NO_WINDOW", 0))
             text = r.stdout + r.stderr
         except (OSError, subprocess.SubprocessError):
             text = ""
@@ -1064,6 +1269,25 @@ _ENV_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")   # safe to `export`
 WSL_LINUX_PATH = ('PATH=$(printf %s "$PATH" | tr : "\\n" | '
                   'grep -v "^/mnt/[a-z]/" | paste -sd: -); ')
 
+
+def _wsl_toolchain_path() -> str:
+    """sh that puts the toolchains WSL_ENSURE fetched first on WSL's PATH,
+    with their variables — activate_user_toolchains, inside the distro."""
+    out = ""
+    for n, tc in LINUX_TOOLCHAINS.items():
+        if n == "wine":
+            continue
+        home = "$HOME/.cargo" if tc.get("rustup") \
+            else f"$HOME/.unified_base/toolchains/{n}"
+        b = f"{home}/{tc['bin']}".rstrip("/")
+        sets = f'PATH="{b}:$PATH"' + "".join(
+            f'; export {k}="{v or home}"' for k, v in tc.get("env", {}).items())
+        out += f'[ -x "{b}/{tc["cmd"]}" ] && {{ {sets}; }}; '
+    return out
+
+
+WSL_LINUX_PATH += _wsl_toolchain_path()
+
 def wsl_setup_guard(apt_pkgs: str | None) -> str:
     """For setup steps only: a tool missing inside the distro skips its step
     with a note — and the install line when the package is known — exactly
@@ -1277,6 +1501,8 @@ TOOLCHAIN_PKGS = {
                "zypper": "make", "brew": "make", "winget": "ezwinports.make"},
     "cmake":  {"apt": "cmake", "dnf": "cmake", "pacman": "cmake",
                "zypper": "cmake", "brew": "cmake", "winget": "Kitware.CMake"},
+    "gcc":    {"apt": "gcc", "dnf": "gcc", "pacman": "gcc", "zypper": "gcc",
+               "brew": "gcc"},          # Rust's linker on Linux (cc_hint)
     "go":     {"apt": "golang-go", "dnf": "golang", "pacman": "go",
                "zypper": "go", "brew": "go", "winget": "GoLang.Go"},
     "wine":   {"apt": "wine wine64", "dnf": "wine", "pacman": "wine",
@@ -1677,8 +1903,17 @@ class JavaRuntime(Runtime):
         if cfg.entry == cls.BUILD or (cfg.entry and
                                       not (proj / cfg.entry).is_file()):
             if (proj / "pom.xml").is_file():
+                # File locks on ~/.m2: two builds at once (a layout) both
+                # wrote one .lastUpdated file, and on Windows one failed
+                # (AccessDeniedException). Lock files kept: deleting them
+                # raced the other build opening them ("Could not open file
+                # channel"). Maven 3.9's resolver; others ignore these.
                 return [("mvn package", "mvn",
-                         ["-q", "-DskipTests", "package"], str(proj))]
+                         ["-q", "-DskipTests",
+                          "-Daether.syncContext.named.factory=file-lock",
+                          "-Daether.syncContext.named.nameMapper=file-gav",
+                          "-Daether.named.file-lock.deleteLockFiles=false",
+                          "package"], str(proj))]
             gradlew = proj / "gradlew"
             prog = str(gradlew) if gradlew.is_file() else "gradle"
             if (proj / "build.gradle").is_file() or \
@@ -1775,7 +2010,11 @@ class CsharpRuntime(Runtime):
                       "--self-contained", "true", "-p:PublishSingleFile=true",
                       "-p:EnableWindowsTargeting=true", "-o", cls.WIN_OUT],
                      str(proj))]
-        return [("dotnet restore", "dotnet", ["restore"], str(proj))]
+        # build, not just restore: a first `dotnet run` compiled for longer
+        # than the 40 s a Linux window under WSL is waited for (it can't be
+        # matched by pid). run then finds it up to date.
+        target = [cfg.entry] if cfg.entry.endswith(".csproj") else []
+        return [("dotnet build", "dotnet", ["build", *target], str(proj))]
 
     @classmethod
     def launch(cls, cfg):
@@ -3661,6 +3900,20 @@ def docker_hint(text: str) -> str | None:
     return None
 
 
+def cc_hint(text: str) -> str | None:
+    """Rust on Linux links with the system's C compiler, and a fresh Ubuntu
+    (WSL's too) has none: cargo only says `cc` is missing."""
+    if "linker `cc` not found" not in text:
+        return None
+    if IS_WINDOWS:
+        return ("Rust links with a C compiler, and WSL's Linux has none. Run "
+                "Set Up Linux Programs (WSL) from the Start menu (setup-wsl.ps1"
+                ") - it installs gcc - or: wsl -u root apt-get install -y gcc. "
+                "Then Start again.")
+    return ("Rust links with a C compiler, and this system has none: "
+            f"{toolchain_install_cmd('gcc') or 'install gcc'}, then Start again.")
+
+
 def chrome_sandbox_hint(text: str) -> str | None:
     """Turn Chromium's cryptic SUID-sandbox abort into instructions.
 
@@ -4626,18 +4879,38 @@ class ModuleTab(QWidget):
         if self.bridge == "wine" and (rt == "docker" or
                                       rt in WINE_NEEDS_WINDOWS_TOOLCHAIN):
             return {}                   # can't run here at all; start() says why
-        want = ["wine"] if self.bridge == "wine" else []
-        want += {"node": ["node"], "web": ["node"], "csharp": ["dotnet"],
-                 "java": ["java", "mvn"] if (proj / "pom.xml").is_file()
-                 else ["java"]}.get(rt, [])
-        if rt == "binary" and (proj / "Cargo.toml").is_file():
-            want.append("cargo")
-        need = {n: toolchain_shortfall(n, proj) for n in want}
+        want = (["wine"] if self.bridge == "wine" else []) + \
+            self._language_toolchains()
+        need = {n: toolchain_shortfall(n, proj) for n in want
+                if n in USER_TOOLCHAINS}  # Ruby and PHP: Windows only
         if self.bridge == "wine" and "cargo" in want and not need["cargo"] \
                 and not shutil.which("rustup"):
             # A Windows build adds a target, which only rustup can.
             need["cargo"] = "rustup isn't installed (a Windows build needs it)"
         return {n: why for n, why in need.items() if why}
+
+    def _language_toolchains(self) -> list:
+        """The fetchable toolchains this module's language needs."""
+        rt, proj = self.cfg.runtime, Path(self.cfg.project_dir)
+        want = {"node": ["node"], "web": ["node"], "csharp": ["dotnet"],
+                "java": ["java", "mvn"] if (proj / "pom.xml").is_file()
+                else ["java"], "ruby": ["ruby"], "php": ["php"]}.get(rt, [])
+        if rt == "binary" and (proj / "Cargo.toml").is_file():
+            want.append("cargo")
+        return want
+
+    def _wsl_toolchain_steps(self) -> list:
+        """A Linux module on Windows: WSL_ENSURE as its first setup step,
+        fetching inside the distro what it lacks there. Ruby and PHP keep
+        apt, as on Linux."""
+        proj = Path(self.cfg.project_dir)
+        spec = [{**LINUX_TOOLCHAINS[n], "name": n,
+                 "floor": toolchain_floor(n, proj)}
+                for n in self._language_toolchains() if n in LINUX_TOOLCHAINS]
+        if not spec:
+            return []
+        return [("checking the Linux toolchain in WSL", "python3",
+                 ["-c", WSL_ENSURE, FETCH, ONCE, json.dumps(spec)], str(proj))]
 
     def _user_toolchain_steps(self, names) -> list:
         """Fetch each toolchain once, under its own lock: a layout starting
@@ -4645,24 +4918,25 @@ class ModuleTab(QWidget):
         cache = APP_DIR / "downloads"
         cache.mkdir(parents=True, exist_ok=True)
         (APP_DIR / "toolchains").mkdir(exist_ok=True)
+        py = console_python()           # pythonw has no output to log
         steps = []
         for name in names:
             tc = USER_TOOLCHAINS[name]
             home = user_toolchain_dir(name)
-            marker = str(home / tc["bin"] / tc["cmd"])
+            marker = str(user_toolchain_marker(name))
             lock = str(cache / f"{name}.lock")
             file = str(cache / tc["url"].rsplit("/", 1)[-1])
-            fetch = [sys.executable, "-c", FETCH, tc["url"], file, tc["sha256"]]
+            fetch = [py, "-c", FETCH, tc["url"], file, tc["sha256"]]
             steps.append((f"downloading {tc['label']} ({tc['mb']} MB, first run)",
-                          sys.executable, ["-c", ONCE, lock, marker, *fetch]
-                          + ([] if tc.get("rustup") else [str(home)]),
+                          py, ["-c", ONCE, lock, marker, *fetch]
+                          + ([] if tc.get("install") else [str(home)]),
                           str(cache)))
-            if tc.get("rustup"):
-                steps.append(("installing Rust with rustup (~100 MB more)",
-                              sys.executable,
-                              ["-c", ONCE, lock, marker, sys.executable, "-c",
-                               RUN_DOWNLOADED, file, "-y", "--no-modify-path",
-                               "--profile", "minimal"], str(cache)))
+            if tc.get("install"):
+                steps.append((tc.get("installing", f"installing {tc['label']}"),
+                              py, ["-c", ONCE, lock, marker, py, "-c",
+                                   RUN_DOWNLOADED, file]
+                              + [a.replace("{dir}", str(home))
+                                 for a in tc["install"]], str(cache)))
         return steps
 
     def _fetch_toolchains(self, need: dict) -> None:
@@ -4676,8 +4950,9 @@ class ModuleTab(QWidget):
             return
         for name, why in need.items():
             self._log(f"{USER_TOOLCHAINS[name]['label']}: {why}. Fetching it "
-                      f"for your user (no password needed), once — into "
-                      f"{user_toolchain_dir(name)}.")
+                      f"for your user (no "
+                      f"{'administrator rights' if IS_WINDOWS else 'password'}"
+                      f" needed), once — into {user_toolchain_dir(name)}.")
 
         def fetched():
             self._fetched = sorted(need)    # a failed download may retry; this may not
@@ -4701,12 +4976,12 @@ class ModuleTab(QWidget):
                 self._toolchain_steps()
         if self.bridge == "wine":
             return self._toolchain_steps()
-        mount = wsl_mount_args(str(self.cfg.project_dir)) \
-            if self.bridge == "wsl" else None
-        if mount:
-            return [("making the project's drive visible to WSL", "wsl.exe",
-                     mount, str(self.cfg.project_dir))]
-        return []
+        if self.bridge != "wsl":
+            return []
+        mount = wsl_mount_args(str(self.cfg.project_dir))
+        return ([("making the project's drive visible to WSL", "wsl.exe",
+                  mount, str(self.cfg.project_dir))] if mount else []) + \
+            self._wsl_toolchain_steps()
 
     # -- env setup ----------------------------------------------------------
     def _env_paths(self) -> tuple[Path, Path]:
@@ -5074,7 +5349,7 @@ class ModuleTab(QWidget):
                 on_ok()
             else:
                 self._log(f"Setup step failed with exit code {code}.")
-                hint = docker_hint(tail[0])
+                hint = docker_hint(tail[0]) or cc_hint(tail[0])
                 if hint:
                     self._log(hint)
                 logger.warning(f"Setup failed: {prog} exited with code {code}")
@@ -6681,15 +6956,32 @@ class UnifiedBase(QMainWindow):
                 "(Project folder and venv stay on disk.)") \
                 != QMessageBox.StandardButton.Yes:
             return
-        tab.shutdown()
-        self.configs.remove(tab.cfg)
+        self._remove_tabs([tab])
+
+    def _close_all_tabs(self):
+        """Every tab's X at once (Modules ▸ Close All Modules), one question."""
+        n = len(self.module_tabs)
+        if not n or QMessageBox.question(
+                self, "Remove all modules",
+                f"Remove all {n} modules from the base? Running ones stop.\n"
+                "(Project folders and venvs stay on disk; saved modules and "
+                "layouts stay in their menus.)") \
+                != QMessageBox.StandardButton.Yes:
+            return
+        self._remove_tabs(list(self.module_tabs))
+
+    def _remove_tabs(self, tabs: list):
+        for tab in tabs:
+            index = self.module_tabs.index(tab)
+            tab.shutdown()
+            self.configs.remove(tab.cfg)
+            if self._highlighted is tab:
+                self._highlighted = None
+            self.module_tabs.pop(index)
+            self.tabbar.removeTab(index)
+            tab.setParent(None)
+            tab.deleteLater()
         save_configs(self.configs)
-        if self._highlighted is tab:
-            self._highlighted = None
-        self.module_tabs.pop(index)
-        self.tabbar.removeTab(index)
-        tab.setParent(None)
-        tab.deleteLater()
         self._refresh_view()
         self._tab_color_sig = None       # indices shifted — force reapply
         self._refresh_tab_colors()
@@ -6997,6 +7289,10 @@ class UnifiedBase(QMainWindow):
 
     def _rebuild_modules_menu(self):
         self.menu_modules.clear()
+        act = self.menu_modules.addAction("Close All Modules…")
+        act.setShortcut("Ctrl+Shift+W")   # no tabs: does nothing
+        act.triggered.connect(self._close_all_tabs)
+        self.menu_modules.addSeparator()
 
         # Per-open-tab display-mode toggle (mirrors the tab right-click menu).
         disp = self.menu_modules.addMenu("Tab Display Mode")
@@ -7191,8 +7487,15 @@ def selftest() -> int:
     row("browser for web modules", find_browser() is not None,
         find_browser() or "none found")
     row("full terminal", TERMINAL_OK)
+    if USER_TOOLCHAINS_OK:
+        row("language toolchains", None, ", ".join(
+            f"{n} " + ("fetched" if user_toolchain_ready(n) else "system"
+                       if shutil.which(tc["cmd"]) else "on first use")
+            for n, tc in USER_TOOLCHAINS.items() if n != "wine"))
     if IS_WINDOWS:
-        row("winget (Install button)", bool(shutil.which("winget")))
+        # Only Docker Desktop, Go, CMake and make still come from winget.
+        row("winget (Install button)", None,
+            "yes" if shutil.which("winget") else "not found")
         if wsl_ready():
             code, out = run(["wsl.exe", "--exec", "echo", "ub-wsl-ok"], 60)
             row("WSL runs commands", "ub-wsl-ok" in out, out[-60:])
@@ -7211,7 +7514,8 @@ def selftest() -> int:
                 f"yes, X server on {wsl_x_display()}" if wsl_x_display()
                 else "no — WSLg (setup-wsl.ps1 sets up embedding)")
         else:
-            row("WSL (Linux modules)", False,
+            # Optional: only Linux modules need it.
+            row("WSL (Linux modules)", None,
                 "not set up — run setup-wsl.ps1 (Set Up Linux Programs)")
     else:
         w = wine_program()

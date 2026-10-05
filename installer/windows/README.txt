@@ -21,7 +21,8 @@ brings its own Python and Qt: nothing else on your PC changes. Setup checks
 that Unified Base starts before it finishes.
 
 Needs Windows 10 version 1809 or later, or Windows 11, 64-bit, and about
-350 MB of disk.
+350 MB of disk, plus the languages your modules download (see below; all
+of them together take about 1.5 GB).
 
 
 FIRST STEPS
@@ -31,29 +32,35 @@ Start menu > Unified Base.
 
 File > Load Demo Modules loads small programs in every supported language, so
 you can see it work before adding your own. Start one with the > button at the
-top of its pane. These need nothing else installed: python-fractal-win,
-c-paint, win32-native.
+top of its pane. Modules > Close All Modules clears every tab at once.
 
 File > Add Module... adds your own: pick a project folder and Unified Base
 works out the language, installs its dependencies the way a developer would,
 and runs it.
 
-A module whose language is not installed yet gets an Install button in its
-pane. It uses winget, Windows' own package manager; the installer of that
-language may ask for administrator approval. What the demos need:
+Nothing else needs installing first. When a module needs a language this PC
+does not have (or has in a version too old for it), its first start
+downloads that language for your user - no administrator rights - and every
+module uses it from then on. The module's log shows the progress; the first
+start of each language takes a few minutes. Downloads are checked against
+the publisher's checksum before anything runs.
 
     Python ............. nothing - Unified Base brings its own
-    Web ................ Node.js for the dev server (Install button);
-                         the page itself shows in Edge, which Windows has
-    Node / Electron .... Node.js            (Install button)
-    C# / WinForms ...... .NET SDK           (Install button)
-    Java ............... a JDK (Temurin)    (Install button)
-    Rust ............... Rust               (Install button)
-    Ruby ............... Ruby               (Install button)
-    PHP ................ PHP                (Install button)
+    Node / Electron .... Node.js 24        (36 MB)
+    Web ................ Node.js for the dev server; the page itself
+                         shows in Edge, which Windows has
+    C# / WinForms ...... .NET SDK 10       (287 MB)
+    Java ............... Temurin JDK 25 and Maven (135 + 9 MB)
+    Rust ............... Rust, GNU toolchain (rustup: ~120 MB)
+    Ruby ............... Ruby 3.4          (RubyInstaller, 20 MB)
+    PHP ................ PHP 8.4           (34 MB)
     C .................. nothing for the demos (they come built); to
                          rebuild, the module's log names the compiler
-    Docker ............. Docker Desktop     (see DOCKER below)
+    Docker ............. Docker Desktop    (see DOCKER below)
+
+They go in %USERPROFILE%\.unified_base\toolchains (Rust in %USERPROFILE%\.cargo,
+where rustup puts it). Go, CMake and make still come from winget, Windows'
+own package manager, through an Install button in the module's pane.
 
 
 LINUX PROGRAMS (optional)
@@ -72,7 +79,10 @@ before changing anything, and is safe to run again:
   2. WSL and Ubuntu (Windows asks for administrator approval, and may ask
      to restart - run the setup again afterwards). Ubuntu asks you to pick a
      Linux user name and password.
-  3. Python for Linux modules inside Ubuntu.
+  3. Inside Ubuntu: Python for Linux modules, a C compiler (Rust links
+     with it) and the libraries Linux GUI programs load - about 250 MB.
+     Node, .NET, Java and Rust for Linux modules download into Ubuntu by
+     themselves, the first time a Linux module needs one, as on Windows.
   4. VcXsrv, a free X server, which lets Linux windows embed. Unified Base
      starts it when a Linux module first needs it (two terminal windows
      flash for a moment as it reads your keyboard layout). If Windows
@@ -97,9 +107,10 @@ WHERE THINGS ARE
 
     %LOCALAPPDATA%\Programs\Unified Base   the program. Replaced on upgrade.
     %USERPROFILE%\.unified_base            your modules, layouts, settings,
-                                           blank-tab projects and every
-                                           module's environment. Kept on
-                                           upgrade; uninstalling asks.
+                                           blank-tab projects, the languages
+                                           it downloaded and every module's
+                                           environment. Kept on upgrade;
+                                           uninstalling asks.
 
 The demo programs build inside the program folder, so after an upgrade each
 demo rebuilds the first time you start it.

@@ -51,17 +51,41 @@ defaults. See `installer/README.md`. **Releases are built by CI**
 (`.github/workflows/release.yml`): a `v<VERSION>` tag makes a draft release
 with both installers; the user tests the drafts and presses Publish.
 
-**Toolchains fetch themselves on Linux** (2026-10-05, after the first real
+**Toolchains fetch themselves** (Linux 2026-10-05, after the first real
 Mint 21 run: Install gave Rust 1.75, Node 12 was there, no .NET 10 package,
-JDK 11 — every non-Python demo failed). `USER_TOOLCHAINS` pins Node, .NET
-SDK, Temurin, Maven, rustup-init and a portable Wine; a module's first start
-fetches what `toolchain_shortfall` says is missing or below
-`toolchain_floor` (general floor raised by the project's own files), under
-`ONCE` locks, into `~/.unified_base/toolchains`. `activate_user_toolchains`
-prepends them to `os.environ["PATH"]` (startup, and every start), so
-`which()` and every child see them. x86-64 Linux only; Windows keeps
-winget. Bumping a pin: new url + sha256 checked against the project's own
-published hash, then the Mint sandbox run in `installer/README.md`.
+JDK 11 — every non-Python demo failed; Windows the same day).
+`USER_TOOLCHAINS` pins Node, .NET SDK, Temurin, Maven, rustup-init and a
+portable Wine; a module's first start fetches what `toolchain_shortfall`
+says is missing or below `toolchain_floor` (general floor raised by the
+project's own files), under `ONCE` locks, into `~/.unified_base/toolchains`.
+`activate_user_toolchains` prepends them to `os.environ["PATH"]` (startup,
+and every start), so `which()` and every child see them. x86-64 only. On
+Windows `WINDOWS_TOOLCHAINS` is laid over it: the same as zips, rustup's
+**GNU** host (no Visual Studio), plus Ruby (RubyInstaller, `/currentuser
+/dir=`, so the uninstaller's delete-data runs its `unins000.exe` first) and
+PHP (`finish_php`: the zip has no php.ini, and php.exe needs vcruntime140.dll,
+copied from beside the running Python — a clean Windows has none). Only
+Docker Desktop, Go, CMake and make still use winget. Windows traps: `ONCE`
+locks with msvcrt (fcntl is Linux-only); `RUN_DOWNLOADED` waits with
+`subprocess.call` (Windows' execv returns at once); FETCH writes `\\?\`
+paths (.NET's SDK has 145-character paths); `tool_version` runs with
+CREATE_NO_WINDOW (under pythonw each probe opened a console); a fresh
+Windows lacks many root certificates until Schannel fetches them, and Python
+never triggers that, so FETCH retries a CERTIFICATE_VERIFY_FAILED download
+with System32's curl.exe (github.com and windows.php.net failed in Windows
+Sandbox). **Linux modules through WSL** fetch the Linux pins inside the
+distro: `_wsl_toolchain_steps` runs `WSL_ENSURE` with the distro's python3
+as the first setup step (argv: FETCH, ONCE, the JSON spec with the project's
+floor), and `WSL_LINUX_PATH` ends with `_wsl_toolchain_path()`, so every WSL
+command has them first on PATH. Ruby/PHP stay apt there, as on Linux; Rust
+needs gcc in the distro (`cc_hint`; `setup-wsl.ps1` installs it with the GUI
+libraries). Two `mvn package` at once collided in `~/.m2` on Windows: the
+step passes the resolver's file-lock flags with deleteLockFiles=false
+(without it: "Could not open file channel"). C# setup is `dotnet build`, not
+restore: a first `dotnet run` under WSL compiled past the 40 s window wait.
+Bumping a pin:
+new url + sha256 checked against the project's own published hash, then
+the Mint sandbox run (Linux) or a Windows Sandbox run (`installer/README.md`).
 
 **User preferences.** The user is on a fixed plan: never warn about token cost
 or scale work down to save it. Admin/root installs (apt, UAC prompts) are the
@@ -98,8 +122,9 @@ user's to run — hand them the command; never type a password.
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
 - `python test_core.py` (inside `.venv`). Linux: 89 pass (2026-10-05, on
-  PySide6). Real Windows: 75 pass, 10 skipped (2026-10-05, on PySide6; +3:
-  check_console_python, check_x_server_on_demand, check_wsl_setup_button).
+  PySide6), 92 expected after the Windows toolchain commit (+3, both
+  OSes: check_windows_toolchains, check_wsl_toolchains, check_once_lock —
+  not yet run on Linux). Real Windows: 79 pass, 13 skipped (2026-10-05).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a

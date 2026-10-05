@@ -164,15 +164,25 @@ begin
       'File > Exit, then uninstall again.', mbError, MB_OK, IDOK);
 end;
 
-{ Everything Unified Base made outside its folder: the user data folder, the
-  Linux modules' environments in WSL's home, and Edge profiles a crash left
-  in %TEMP% (web modules; normally removed on Stop). Toolchains, WSL, VcXsrv
-  and Docker are programs of their own and stay. }
+{ Everything Unified Base made outside its folder: the user data folder (with
+  the toolchains modules fetched into it), the Linux modules' environments
+  in WSL's home, and Edge profiles a crash left in %TEMP% (web modules;
+  normally removed on Stop). The fetched Ruby is an install of its own, so
+  its uninstaller runs first, or Installed Apps keeps a dead entry. Rust
+  (rustup, in ~\.cargo as rustup puts it), WSL, VcXsrv and Docker are
+  programs of their own and stay. }
 procedure DeleteData(const Data: String);
 var
   Distro: String;
   Code: Integer;
 begin
+  { .NET's compiler server outlives a build by 10 minutes, holding files. }
+  if FileExists(Data + '\toolchains\dotnet\dotnet.exe') then
+    Exec(Data + '\toolchains\dotnet\dotnet.exe', 'build-server shutdown', '',
+      SW_HIDE, ewWaitUntilTerminated, Code);
+  if FileExists(Data + '\toolchains\ruby\unins000.exe') then
+    Exec(Data + '\toolchains\ruby\unins000.exe', '/VERYSILENT /SUPPRESSMSGBOXES',
+      '', SW_HIDE, ewWaitUntilTerminated, Code);
   DelTree(Data, True, True, True);
   DelTree(GetTempDir + 'ub_web_*', False, True, True);
   if FileExists(ExpandConstant('{sys}\wsl.exe')) and RegQueryStringValue(HKCU,
@@ -195,8 +205,8 @@ begin
   if (Lowercase(ExpandConstant('{param:DELETEDATA|no}')) = 'yes') or
      (not UninstallSilent and (MsgBox('Unified Base is removed.' + #13#10#13#10 +
        'Also delete your Unified Base data? That is your module list, layouts ' +
-       'and settings, every module''s environment and log, and the projects ' +
-       'you made with New Blank Tab:' + #13#10#13#10 + Data + #13#10#13#10 +
+       'and settings, the languages it downloaded, every module''s ' +
+       'environment and log, and the projects you made with New Blank Tab:' + #13#10#13#10 + Data + #13#10#13#10 +
        'Project folders you added from elsewhere are not touched. Keep the ' +
        'data to pick up where you left off after reinstalling.',
        mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES)) then begin

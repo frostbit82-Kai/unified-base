@@ -14,7 +14,7 @@ X11 window from a C#/.NET app.
 ## Run
 
 Unified Base runs this automatically: it detects `Demo.csproj` (runtime `csharp`),
-then runs `dotnet restore` followed by `dotnet run --project Demo.csproj`.
+then runs `dotnet build` followed by `dotnet run --project Demo.csproj`.
 
 To run it by hand:
 

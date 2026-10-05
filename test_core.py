@@ -953,8 +953,22 @@ def check_shortcuts():
         hit = []
         win._on_current(lambda t: hit.append(t.cfg.name))
         assert hit == ["m1"], hit
-        for t in win.module_tabs:
-            t.shutdown()
+        # Modules ▸ Close All Modules: every tab's X, one question
+        act = next(a for a in win.menu_modules.actions()
+                   if a.text().startswith("Close All Modules"))
+        assert act.shortcut().toString() == "Ctrl+Shift+W"
+        Box, keep = main.QMessageBox, main.QMessageBox.question
+        try:
+            Box.question = staticmethod(lambda *a: Box.StandardButton.No)
+            act.trigger()
+            assert len(win.module_tabs) == 3 and win.tabbar.count() == 3
+            Box.question = staticmethod(lambda *a: Box.StandardButton.Yes)
+            act.trigger()
+        finally:
+            Box.question = keep
+        assert win.module_tabs == [] and win.tabbar.count() == 0
+        assert win.configs == [] and main.load_configs() == []
+        win._close_all_tabs()                   # none left: nothing to ask
         win.close()
 
 
@@ -2389,14 +2403,151 @@ def check_wine_fetch():
         r = run(url, d / "dl.zip", "0" * 64)
         assert r.returncode != 0 and "Checksum mismatch" in r.stderr, r
         assert not (d / "dl.zip").exists() and not (d / "dl.zip.part").exists()
-        r = run(url, d / "dl.zip", sha, d / "jdk")
-        assert r.returncode == 0, r.stderr
-        assert (d / "jdk" / "bin" / "java.exe").read_bytes() == b"MZ java"
-        assert (d / "jdk" / "lib" / "x.txt").is_file()
         r = run(url, d / "dl.zip", sha, d / "one",
                 "runtimes/win-x64/native/ucrtbase.dll")
-        assert r.returncode == 0 and "Downloading" not in r.stdout, r  # cached
+        assert r.returncode == 0, r.stderr
         assert [p.name for p in (d / "one").iterdir()] == ["ucrtbase.dll"]
+        (d / "jdk").mkdir()
+        (d / "jdk" / "stale.txt").write_text("from a failed try")
+        r = run(url, d / "dl.zip", sha, d / "jdk")
+        assert r.returncode == 0 and "Downloading" not in r.stdout, r  # cached
+        # this zip's members share no top folder: unpacked as they are
+        assert (d / "jdk" / "jdk-1" / "bin" / "java.exe").read_bytes() == b"MZ java"
+        assert (d / "jdk" / "runtimes").is_dir()
+        assert not (d / "jdk" / "stale.txt").exists()
+        # unpacked whole: the folder is the copy kept
+        assert not (d / "dl.zip").exists() and not (d / "jdk.part").exists()
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr("node-v1/", b"")
+            z.writestr("node-v1/node.exe", b"MZ node")
+            z.writestr("node-v1/node_modules/npm/x.js", b"x")
+        sha = hashlib.sha256(src.read_bytes()).hexdigest()
+        r = run(url, d / "dl.zip", sha, d / "node")
+        assert r.returncode == 0, r.stderr
+        assert (d / "node" / "node.exe").read_bytes() == b"MZ node"
+        assert (d / "node" / "node_modules" / "npm" / "x.js").is_file()
+
+
+def check_windows_toolchains():
+    """Windows fetches the same toolchains as zips, plus Ruby and PHP: each
+    entry complete once laid over Linux's, Ruby through its installer into
+    its own folder, and PHP with a php.ini that finds its extensions from any
+    working directory."""
+    for n, w in main.WINDOWS_TOOLCHAINS.items():
+        tc = {**main.USER_TOOLCHAINS.get(n, {}), **w}
+        gap = {"label", "mb", "cmd", "bin", "exe", "url", "sha256", "floor"} \
+            - set(tc)
+        assert not gap and len(tc["sha256"]) == 64, (n, gap)
+        assert tc["exe"].startswith(tc["cmd"] + "."), n
+    assert "x86_64-pc-windows-gnu" in main.WINDOWS_TOOLCHAINS["cargo"]["install"]
+    with tempfile.TemporaryDirectory() as d:
+        home = Path(d)
+        main.finish_php(home)
+        (home / "php.ini").write_text((home / "php.ini").read_text() + "; mine")
+        main.finish_php(home)                     # never rewrites it
+        ini = (home / "php.ini").read_text()
+        assert f'extension_dir = "{home / "ext"}"' in ini, ini
+        assert "extension=com_dotnet" in ini and ini.endswith("; mine"), ini
+    if not ON_WINDOWS:
+        return
+    _app()
+    keep = dict(os.environ)
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        _use_app_dir(d / "app")
+        (d / "proj").mkdir()
+        os.environ["PATH"] = str(d / "nothing")   # no Ruby, no PHP
+        try:
+            for rt, n in (("ruby", 2), ("php", 1)):
+                tab = main.ModuleTab(main.ModuleConfig(
+                    name=rt, project_dir=str(d / "proj"), entry="", runtime=rt))
+                need = tab._needed_toolchains()
+                assert list(need) == [rt], need
+                steps = tab._user_toolchain_steps(need)
+                tab.shutdown()
+                assert len(steps) == n, steps
+                home = str(main.user_toolchain_dir(rt))
+                assert steps[0][2][3].endswith(main.USER_TOOLCHAINS[rt]["exe"])
+                assert steps[0][1] == main.console_python()
+                if rt == "ruby":                 # installed, not unpacked
+                    assert "/dir=" + home in steps[1][2], steps[1]
+                    assert "/currentuser" in steps[1][2]
+                else:
+                    assert steps[0][2][-1] == home, steps[0]
+        finally:
+            os.environ.clear()
+            os.environ.update(keep)
+
+
+def check_wsl_toolchains():
+    """A Linux module on Windows fetches its language inside WSL: one setup
+    step runs WSL_ENSURE with the Linux pins and the project's floor; the
+    script fetches what is missing, once, and WSL's PATH then has it."""
+    import hashlib
+    import json
+    import zipfile
+    _app()
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        (d / "Demo.csproj").write_text(
+            "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
+            "</PropertyGroup></Project>")
+        tab = main.ModuleTab(main.ModuleConfig(
+            name="cs", project_dir=str(d), entry="", runtime="csharp",
+            platform="linux"))
+        steps = tab._wsl_toolchain_steps()
+        tab.shutdown()
+        assert len(steps) == 1 and steps[0][1] == "python3", steps
+        args = steps[0][2]
+        assert args[:4] == ["-c", main.WSL_ENSURE, main.FETCH, main.ONCE]
+        spec = json.loads(args[4])
+        assert [s["name"] for s in spec] == ["dotnet"], spec
+        assert spec[0]["floor"] == [10] and spec[0]["url"].endswith(".tar.gz")
+        path = main.WSL_LINUX_PATH
+        assert '"$HOME/.unified_base/toolchains/node/bin/node" ]' in path, path
+        assert 'export JAVA_HOME="$HOME/.unified_base/toolchains/java"' in path
+        assert "$HOME/.cargo/bin" in path and "wine" not in path
+        # the script itself, on a tool this machine lacks
+        src = d / "tool.zip"
+        with zipfile.ZipFile(src, "w") as z:
+            z.writestr("tool-1/bin/ubtool-none", b"#!/bin/sh\n")
+        tc = {"name": "tool", "label": "Tool 1", "cmd": "ubtool-none",
+              "bin": "bin", "url": src.as_uri(), "floor": [1, 0],
+              "sha256": hashlib.sha256(src.read_bytes()).hexdigest()}
+        env = {**os.environ, "HOME": str(d), "USERPROFILE": str(d)}
+        run = lambda: subprocess.run(
+            [sys.executable, "-c", main.WSL_ENSURE, main.FETCH, main.ONCE,
+             json.dumps([tc])], capture_output=True, text=True, env=env,
+            timeout=60)
+        r = run()
+        assert r.returncode == 0 and "isn't installed" in r.stdout, r
+        assert (d / ".unified_base" / "toolchains" / "tool" / "bin"
+                / "ubtool-none").is_file()
+        r = run()
+        assert r.returncode == 0 and r.stdout == "", r      # once
+    # Rust in a fresh WSL Ubuntu: no cc to link with
+    assert "gcc" in main.cc_hint("error: linker `cc` not found\n")
+    assert main.cc_hint("error: could not compile") is None
+
+
+def check_once_lock():
+    """Two modules setting up one toolchain at once: one runs the step, the
+    other waits for it, then finds it done (fcntl on Linux, msvcrt on
+    Windows)."""
+    with tempfile.TemporaryDirectory() as d:
+        mark = Path(d) / "tool.exe"
+        step = ("import sys, time; time.sleep(2); "
+                "open(sys.argv[1], 'w').write('ran')")
+        args = [sys.executable, "-c", main.ONCE, str(Path(d) / "x.lock"),
+                str(mark), sys.executable, "-c", step, str(mark)]
+        a = subprocess.Popen(args, stdout=subprocess.PIPE, text=True)
+        time.sleep(0.5)
+        b = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        out_a = a.communicate(timeout=30)[0]
+        assert a.returncode == 0 and "Waiting" not in out_a, out_a
+        assert b.returncode == 0 and "Waiting" in b.stdout, b
+        assert "Already done" in b.stdout, b
+        assert mark.read_text() == "ran"
 
 
 
@@ -2616,6 +2767,8 @@ if __name__ == "__main__":
                check_wine_family, check_private_wineprefix_boot,
                check_os_badge, check_windows_only_evidence,
                check_wine_runtimes, check_wine_fetch,
+               check_windows_toolchains, check_wsl_toolchains,
+               check_once_lock,
                check_fetch_tarball, check_tool_version,
                check_toolchain_floor, check_needed_toolchains,
                check_launch_after_setup,

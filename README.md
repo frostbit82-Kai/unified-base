@@ -37,18 +37,22 @@ Self-Test* in the Start menu).
 When you add a folder, the base detects its runtime (asking if more than one
 matches) and installs/builds dependencies the same way a developer would.
 
-**Toolchains fetch themselves on Linux.** If a module's language is missing,
-or older than the project needs, its first start downloads a current one for
-the user — no password — into `~/.unified_base/toolchains`, first on PATH for
-every module from then on: Node.js 24 LTS, .NET SDK 10, Temurin JDK 25,
-Maven 3.9, Rust (rustup, into `~/.cargo`) and, for Windows modules, Wine 11.
-"Too old" is the general floor (Node 22.12, Rust 1.80, Wine 10) raised by
-what the project declares: its `TargetFramework`, Maven/Gradle Java release,
-`engines.node`, a v4 `Cargo.lock`, a `rust-version`. Each download is pinned
-and SHA-256-checked (`USER_TOOLCHAINS` in `main.py`). LTS distros need this:
-Mint 21 / Ubuntu 22.04 package Node 12, Rust 1.75, JDK 11 and no .NET 10.
-PHP, Ruby and Docker still come from the package manager (the **Install**
-button, which asks for a password); on Windows every Install button is winget.
+**Toolchains fetch themselves.** If a module's language is missing, or older
+than the project needs, its first start downloads a current one for the
+user — no password, no admin — into `~/.unified_base/toolchains`, first on
+PATH for every module from then on: Node.js 24 LTS, .NET SDK 10, Temurin
+JDK 25, Maven 3.9, Rust (rustup, into `~/.cargo`; the GNU toolchain on
+Windows, which needs no Visual Studio), on Windows also Ruby 3.4
+(RubyInstaller, per user) and PHP 8.4, and on Linux, for Windows modules,
+Wine 11. "Too old" is the general floor (Node 22.12, Rust 1.80, Wine 10)
+raised by what the project declares: its `TargetFramework`, Maven/Gradle
+Java release, `engines.node`, a v4 `Cargo.lock`, a `rust-version`. Each
+download is pinned and SHA-256-checked (`USER_TOOLCHAINS` and
+`WINDOWS_TOOLCHAINS` in `main.py`). LTS distros need this: Mint 21 / Ubuntu
+22.04 package Node 12, Rust 1.75, JDK 11 and no .NET 10. On Linux, PHP, Ruby
+and Docker still come from the package manager (the **Install** button,
+which asks for a password); on Windows only Docker Desktop, Go, CMake and
+make do, through winget's Install button.
 
 | Runtime | Detected by | Set up with | Launched with |
 |---|---|---|---|
@@ -57,7 +61,7 @@ button, which asks for a password); on Windows every Install button is winget.
 | **Native binary** (Rust/Go/C/C++) | `Cargo.toml`, `go.mod`, `Makefile`, `CMakeLists.txt`, or an executable file | `cargo build --release` / `go build` / `make` / `cmake` | the built binary, or a prebuilt executable directly |
 | **Java** | `pom.xml`, `build.gradle(.kts)`, or a `.jar` | `mvn package` / `gradle build` | `java -jar <jar>` |
 | **Web app** | `package.json` with a dev server (Vite/Next/CRA/Vue/…) | `npm install` | `npm run dev`, then a Chromium-family browser in `--app` mode pointed at the detected URL, whose window is embedded |
-| **C# / .NET** | `*.csproj` or `*.sln` | `dotnet restore` | `dotnet run [--project <csproj>]` |
+| **C# / .NET** | `*.csproj` or `*.sln` | `dotnet build` | `dotnet run [--project <csproj>]` |
 | **Ruby** | `Gemfile`, `Rakefile`, or any `.rb` | `bundle install` (if Gemfile) | `ruby <script>` / `rake` |
 | **PHP** | `composer.json`, `index.php`, or any `.php` | `composer install` (if composer.json) | `php <script>` / `php -S localhost:8000` |
 | **Docker** | `Dockerfile` or `docker-compose.yml` | `docker build` | `docker run --rm <image>` / `docker-compose up` |
@@ -144,12 +148,15 @@ the launcher tags each launch so Stop and the meters still reach them.
 
 **WSL (Windows running Linux apps).** Set it up once with `setup-wsl.ps1`
 (Start menu: *Set Up Linux Programs (WSL)*, or a Linux module's **Set up WSL**
-button): it checks virtualization, installs WSL and Ubuntu, Python for Linux
-modules, VcXsrv, and `networkingMode=mirrored` in `%USERPROFILE%\.wslconfig`,
-asking before each change. Setup steps, the launch and the command bar all run
-inside the default distro, through a login shell so its PATH is there; Python
-modules get their venv in the distro's own home. Toolchains need to exist
-*inside* the distro. Linux windows embed through VcXsrv, which the launcher
+button): it checks virtualization, installs WSL and Ubuntu, Python, gcc and
+the GUI libraries Linux modules load, VcXsrv, and `networkingMode=mirrored`
+in `%USERPROFILE%\.wslconfig`, asking before each change. Setup steps, the
+launch and the command bar all run inside the default distro, through a login
+shell so its PATH is there; Python modules get their venv in the distro's own
+home. Toolchains have to be *inside* the distro, and fetch themselves there:
+a Linux module's first setup step runs the same pinned download with the
+distro's `python3`, into `~/.unified_base/toolchains` in WSL (Node, .NET,
+Java, Maven; Rust into `~/.cargo`). Linux windows embed through VcXsrv, which the launcher
 starts when a Linux module needs it; WSLg's own windows refuse to be embedded,
 so without VcXsrv a Linux app opens in its own window beside the launcher.
 
@@ -211,9 +218,11 @@ imports (`__import__("x")`, `importlib.import_module("x")` with literal
 names). Closing a tab removes the module from the base (folder and
 venv stay on disk). Open tabs persist in `~/.unified_base/modules.json`.
 
-**Modules menu** — right-click a tab → "Save to Modules" to keep it in the
-library (`~/.unified_base/library.json`); the Modules menu then opens it in
-one click (or removes it via Remove Saved Module).
+**Modules menu** — **Close All Modules…** (Ctrl+Shift+W) closes every tab
+at once, as each tab's × would, after one question. Right-click a tab →
+"Save to Modules" to keep it in the library (`~/.unified_base/library.json`);
+the Modules menu then opens it in one click (or removes it via Remove Saved
+Module).
 
 **Layouts** — File → Save Layout As… stores the current set of tabs (order
 and names included) under a custom name; File → Load Layout restores and
