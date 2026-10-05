@@ -135,15 +135,27 @@ public class MainWindow : Window
         head.Children.Add(Ui.Text("WPF + Windows.Media.Ocr · SpeechSynthesis · UISettings · " +
                                   "PowerManager · NetworkInformation · DeviceWatcher", Ui.Dim));
         var tabs = new TabControl { Margin = new Thickness(12, 0, 12, 12) };
-        tabs.Items.Add(new TabItem { Header = "Read the screen", Content = new OcrTab() });
-        tabs.Items.Add(new TabItem { Header = "Voices", Content = new VoiceTab() });
-        tabs.Items.Add(new TabItem { Header = "This PC", Content = new PcTab() });
-        tabs.Items.Add(new TabItem { Header = "Devices", Content = new DevicesTab() });
+        tabs.Items.Add(new TabItem { Header = "Read the screen", Content = InPlace(() => new OcrTab()) });
+        tabs.Items.Add(new TabItem { Header = "Voices", Content = InPlace(() => new VoiceTab()) });
+        tabs.Items.Add(new TabItem { Header = "This PC", Content = InPlace(() => new PcTab()) });
+        tabs.Items.Add(new TabItem { Header = "Devices", Content = InPlace(() => new DevicesTab()) });
         var dock = new DockPanel();
         DockPanel.SetDock(head, Dock.Top);
         dock.Children.Add(head);
         dock.Children.Add(tabs);
         Content = dock;
+    }
+
+    // A WinRT class this system lacks (Wine has no Windows.Media.Playback)
+    // throws from the tab's constructor. Say so in that tab, not by crashing.
+    private static UIElement InPlace(Func<UIElement> make)
+    {
+        try { return make(); }
+        catch (Exception e)
+        {
+            return new Border { Padding = new Thickness(12),
+                                Child = Ui.Text($"Not available on this system: {e.Message}", Ui.Dim) };
+        }
     }
 }
 

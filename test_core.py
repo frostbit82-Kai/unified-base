@@ -663,6 +663,27 @@ def check_custom_start_routing():
         tab.deleteLater()
 
 
+def check_cmdbar_venv():
+    """The command bar runs in a native Python module's venv; a bridged one,
+    or a module with no venv yet, gets nothing added."""
+    app = _app()   # noqa: F841
+    with tempfile.TemporaryDirectory() as d:
+        py = main.venv_python(Path(d) / ".venv")
+        py.parent.mkdir(parents=True)
+        py.write_text("")
+        cfg = main.ModuleConfig(name="x", project_dir=d, entry="main.py",
+                                runtime="python")
+        tab = main.ModuleTab(cfg)
+        env = tab._venv_env()
+        assert env["VIRTUAL_ENV"] == str(Path(d) / ".venv"), env
+        assert env["PATH"].split(os.pathsep)[0] == str(py.parent), env
+        cfg.platform = "windows" if not ON_WINDOWS else "linux"   # bridged
+        assert tab._venv_env() == {}
+        cfg.platform, cfg.runtime = "", "node"
+        assert tab._venv_env() == {}
+        tab.deleteLater()
+
+
 def check_shell_command():
     prog, args = main.shell_command("echo hi")
     if ON_WINDOWS:
@@ -2258,6 +2279,7 @@ if __name__ == "__main__":
                check_binary_build_entries,
                check_push_recent, check_tab_highlight,
                check_custom_runtime, check_custom_start_routing,
+               check_cmdbar_venv,
                check_shell_command,
                check_row_drag_slack, check_tab_reveals_pane,
                check_compact_header, check_compact_button_intent,

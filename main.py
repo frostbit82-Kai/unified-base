@@ -1919,15 +1919,27 @@ class LangTabBar(QTabBar):
             p.fillRect(QRect(r.left(), r.top(), hw, r.height()), QColor(c1))
             p.fillRect(QRect(r.left() + hw, r.top(), r.width() - hw,
                              r.height()), QColor(c2))
-            txt = self.tabText(i)
+            # The label goes between the tab's buttons (OS badge, close), or
+            # its end hides under the close button.
+            tr = QRect(r)
+            for side in (QTabBar.ButtonPosition.LeftSide,
+                         QTabBar.ButtonPosition.RightSide):
+                b = self.tabButton(i, side)
+                if b is not None and b.isVisible():
+                    if side == QTabBar.ButtonPosition.LeftSide:
+                        tr.setLeft(b.geometry().right() + 1)
+                    else:
+                        tr.setRight(b.geometry().left() - 1)
             fm = p.fontMetrics()
+            txt = fm.elidedText(self.tabText(i), Qt.TextElideMode.ElideRight,
+                                max(tr.width() - 14, 0))
             pill = QRect(0, 0, fm.horizontalAdvance(txt) + 14, fm.height() + 4)
-            pill.moveCenter(r.center())
+            pill.moveCenter(tr.center())
             p.setPen(Qt.PenStyle.NoPen)
             p.setBrush(QColor(0, 0, 0, 150))       # dark pill = readable text
             p.drawRoundedRect(pill, 6, 6)
             p.setPen(QColor("#ffffff"))
-            p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
+            p.drawText(tr, Qt.AlignmentFlag.AlignCenter, txt)
             if i == self.currentIndex():
                 p.setBrush(Qt.BrushStyle.NoBrush)
                 p.setPen(QColor("#ffffff"))
@@ -4149,13 +4161,29 @@ class ModuleTab(QWidget):
         self._term_proc = p
         # Run through a shell so pipes, globs, &&, and env expansion work.
         prog, args, run_env = self._wrap(*shell_command(cmd),
-                                         str(self.cfg.project_dir))
+                                         str(self.cfg.project_dir),
+                                         self._venv_env())
         if run_env:
             qenv = QProcessEnvironment.systemEnvironment()
             for k, v in run_env.items():
                 qenv.insert(k, str(v))
             p.setProcessEnvironment(qenv)
         start_qprocess(p, prog, args)
+
+    def _venv_env(self) -> dict:
+        """The module's venv first on PATH, so the command bar's `pip install
+        rich` lands where the module runs — not in the system Python, which
+        Debian/Ubuntu refuse (externally managed). Native Python modules only:
+        a bridged one's interpreter lives in Wine or the WSL distro."""
+        if self.cfg.runtime != "python" or self.bridge != "native":
+            return {}
+        own = project_venv_python(Path(self.cfg.project_dir))
+        py = own if own is not None and not self.cfg.use_shared \
+            else self._env_paths()[1]
+        if not py.is_file():
+            return {}
+        return {"VIRTUAL_ENV": str(py.parent.parent),
+                "PATH": str(py.parent) + os.pathsep + os.environ.get("PATH", "")}
 
     def _toggle_terminal(self, on: bool):
         if not on:
@@ -4613,8 +4641,10 @@ class ModuleTab(QWidget):
         ENVS_DIR.mkdir(parents=True, exist_ok=True)
         self._set_status("creating venv")
         if USE_UV:
-            self._log(f"$ uv venv {env_dir}")
-            self._run_setup("uv", ["venv", str(env_dir)],
+            # --seed: uv's venvs have no pip otherwise, and the command bar's
+            # `pip install x` then reached the system pip instead.
+            self._log(f"$ uv venv --seed {env_dir}")
+            self._run_setup("uv", ["venv", "--seed", str(env_dir)],
                             on_ok=self._install_deps)
         else:
             # Windows has no `python3` on PATH by default (it is `python` or
