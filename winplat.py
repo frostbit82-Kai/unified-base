@@ -747,7 +747,7 @@ class Win32EmbedHost(QWidget):
 
     def event(self, ev):
         if ev.type() == QEvent.Type.WinIdChange:
-            QTimer.singleShot(0, self._after_recreate)
+            QTimer.singleShot(0, self, self._after_recreate)
         return super().event(ev)
 
     def _after_recreate(self):
@@ -822,7 +822,7 @@ class Win32EmbedHost(QWidget):
             # only on a show of its own — a Tk app embedded blank. Next
             # turn: showEvent comes before Qt really shows our window.
             self._remap = False
-            QTimer.singleShot(0, self._show_again)
+            QTimer.singleShot(0, self, self._show_again)
 
     def _show_again(self):
         if self.child_alive():
@@ -835,7 +835,7 @@ class Win32EmbedHost(QWidget):
             if msg.message == WM_PARENTNOTIFY and \
                     (msg.wParam & 0xFFFF) in CLICKS:
                 self.clicked.emit()
-                QTimer.singleShot(0, self._focus_if_outside)
+                QTimer.singleShot(0, self, self._focus_if_outside)
         except Exception as e:                      # never break the pump
             logger.debug(f"nativeEvent inspect failed: {e}")
         # QWidget's own nativeEvent just returns false. Calling it through

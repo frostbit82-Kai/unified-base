@@ -4532,7 +4532,7 @@ class ModuleTab(QWidget):
             self._launch_process(spec.program, spec.args, spec.workdir,
                                  spec.extra_env, embed=False)
             self._set_status("starting (web server)")
-            QTimer.singleShot(30000, self._web_url_timeout)
+            QTimer.singleShot(30000, self, self._web_url_timeout)
         self._run_command_chain(self._bridge_steps() + rt.setup_steps(self.cfg),
                                 on_ok=go)
 
@@ -4839,7 +4839,8 @@ class ModuleTab(QWidget):
             return
         _WSL_TURN["searching"] = None
         if _WSL_TURN["queue"]:
-            QTimer.singleShot(0, _WSL_TURN["queue"].pop(0)[1])
+            tab, launch = _WSL_TURN["queue"].pop(0)
+            QTimer.singleShot(0, tab, launch)
 
     def _wsl_queued(self) -> bool:
         return any(t is self for t, _ in _WSL_TURN["queue"])
@@ -5144,20 +5145,20 @@ class ModuleTab(QWidget):
                     self._reembed_rounds = 0
                     host._resize_child()
                     return
-                QTimer.singleShot(500, lambda: check(stable + 1, tries))
+                QTimer.singleShot(500, self, lambda: check(stable + 1, tries))
                 return
             # Child drifted (Qt recreated our native window, or the WM grabbed
             # it back). Put it back rather than giving up — the host's heal
             # timer is doing the same; we just keep watching.
             host.reattach_if_needed()
             if tries + 1 <= 12:  # ~6 s of nudging
-                QTimer.singleShot(500, lambda: check(0, tries + 1))
+                QTimer.singleShot(500, self, lambda: check(0, tries + 1))
                 return
             self._log("Couldn't keep the window docked — panel mode. "
                       "Use the Embed button to retry.")
             self._teardown_embed()
             self._set_status("running (own window)")
-        QTimer.singleShot(700, lambda: check())
+        QTimer.singleShot(700, self, lambda: check())
 
     def _embed_qt(self, wid: int):
         try:
@@ -5324,7 +5325,7 @@ class ModuleTab(QWidget):
         self._reap_container()        # docker run's client is not the container
         self._signal_tree(self.app_proc, SIGTERM)
         self._doomed = self.app_proc
-        QTimer.singleShot(3000, self._force_kill)
+        QTimer.singleShot(3000, self, self._force_kill)
 
     def _signal_tree(self, proc, sig: int):
         """Signal a module process and its whole tree, not just the wrapper."""
@@ -5358,7 +5359,7 @@ class ModuleTab(QWidget):
             self.start()
             return
         self.app_proc.finished.connect(
-            lambda *_: QTimer.singleShot(200, self.start))
+            lambda *_: QTimer.singleShot(200, self, self.start))
         self.stop()
 
     def shutdown(self):
@@ -5526,6 +5527,7 @@ class UnifiedBase(QMainWindow):
         hint = QLabel("No modules yet — use ＋ Add Module, or File ▸ Load "
                       "Demo Modules to try some.")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setWordWrap(True)    # one long line would set the window's minimum width
         ev.addWidget(hint)
         self.content.addWidget(self.empty_page)   # index 0
         self.content.addWidget(self.scroll)       # index 1
@@ -5776,7 +5778,7 @@ class UnifiedBase(QMainWindow):
             if tab is self._current_tab() and tab.parent() is not \
                     self.pane_stash and tab.isVisible():
                 self.scroll.ensureWidgetVisible(tab, 0, 0)
-        QTimer.singleShot(0, go)
+        QTimer.singleShot(0, self, go)
 
     def _pick_tab(self, _index: int):
         """Tab bar clicked: outline that module and scroll to it. Fires even
@@ -5823,7 +5825,7 @@ class UnifiedBase(QMainWindow):
                 self._highlight_current()
             else:
                 self._set_current_tab(tab)   # _on_tab_selected highlights
-        QTimer.singleShot(0, go)
+        QTimer.singleShot(0, self, go)
 
     def _add_tab(self, cfg: ModuleConfig) -> ModuleTab:
         tab = ModuleTab(cfg)
@@ -6036,7 +6038,7 @@ class UnifiedBase(QMainWindow):
         vis = tuple(id(t) for t in panes)
         if vis != self._prev_visible:
             self._prev_visible = vis
-            QTimer.singleShot(0, lambda: self._even_split())
+            QTimer.singleShot(0, self, lambda: self._even_split())
 
     def _arrange_grid(self, panes):
         self._activate_arrangement(self.grid_splitter)
@@ -6083,7 +6085,7 @@ class UnifiedBase(QMainWindow):
         vis = tuple(id(t) for t in panes) + (cols,)
         if vis != self._prev_visible:
             self._prev_visible = vis
-            QTimer.singleShot(0, self._even_grid)
+            QTimer.singleShot(0, self, self._even_grid)
 
     def _even_split(self, force: bool = False):
         n = self.row_splitter.count()

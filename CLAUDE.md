@@ -38,7 +38,9 @@ ships as separate, unmodified shared libraries. Import only from `PySide6.*`:
 two bindings in one process are two copies of Qt. The build refuses a runtime
 with PyQt6 in it. Differences that bit: `pyqtSignal` is `Signal`,
 `QT_VERSION_STR` is `qVersion()`, and PySide6 has no `QWIDGETSIZE_MAX`
-(main.py defines it).
+(main.py defines it). `QTimer.singleShot(ms, self.method)` is not cancelled
+when `self` is deleted (PyQt6's was): pass the object as context,
+`singleShot(ms, self, fn)` — Win32EmbedHost raised "already deleted" in tests.
 
 **Installers: Linux done (`installer/`), Windows next.** Both install per user
 (`~/.local/share/UnifiedBase`, and on Windows `%LOCALAPPDATA%\Programs`, no
@@ -82,8 +84,7 @@ user's to run — hand them the command; never type a password.
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
 - `python test_core.py` (inside `.venv`). Linux: 82 pass (2026-10-05, on
-  PySide6). Real Windows: 72 pass, 10 skipped (2026-10-05, still PyQt6 —
-  re-run after `run.bat` installs PySide6).
+  PySide6). Real Windows: 72 pass, 10 skipped (2026-10-05, on PySide6).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
