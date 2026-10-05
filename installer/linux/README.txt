@@ -45,14 +45,22 @@ FIRST STEPS
 
 File > Load Demo Modules loads small programs in every supported language, so
 you can see it work before adding your own. Start one with the ▶ button at the
-top of its pane.
+top of its pane. (Load them from that menu rather than scanning this folder:
+tabs added from here stop working once it is moved or deleted.)
 
 File > Add Module... adds your own: pick a project folder and Unified Base
 works out the language, installs its dependencies the way a developer would,
 and runs it.
 
-A module whose language is not installed yet gets an Install button in its pane.
-That runs your package manager, so the system asks for your password there.
+The first start of a module also gets its language, if this machine lacks it
+or has one too old for the project: Node.js, .NET, Java and Maven, Rust, and
+Wine for Windows programs download into ~/.unified_base/toolchains (Rust into
+~/.cargo, where rustup keeps it) -- no password, once, shared by every module.
+Each download is pinned and checked against its SHA-256 before it is used.
+Expect a few minutes for the first .NET (229 MB) or Java (135 MB) module.
+
+PHP, Ruby and Docker come from your package manager instead: those modules get
+an Install button in their pane, and the system asks for your password there.
 
 
 WHAT IT NEEDS
@@ -62,8 +70,9 @@ An X11 session for embedding. Linux Mint's Cinnamon is X11 already. On a
 Wayland desktop it runs through XWayland and most programs still embed; if one
 will not, log in with a session ending in "on Xorg".
 
-Wine, for Windows programs:   sudo apt install wine wine64
 xterm, for the full terminal under each module (it offers to install it).
+Wine for Windows programs downloads itself (see above); a Wine 10 or newer
+already installed is used instead.
 
 
 WHERE THINGS ARE
@@ -71,8 +80,9 @@ WHERE THINGS ARE
 
     ~/.local/share/UnifiedBase   the program. Replaced on upgrade.
     ~/.unified_base              your modules, layouts, settings, blank-tab
-                                 projects, every module's environment and the
-                                 Wine prefix. Kept on upgrade and uninstall.
+                                 projects, every module's environment, the
+                                 Wine prefix and the downloaded toolchains.
+                                 Kept on upgrade and uninstall.
 
 The demo programs build inside the program folder, so after an upgrade each
 demo rebuilds the first time you start it.

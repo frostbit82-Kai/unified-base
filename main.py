@@ -543,10 +543,13 @@ WINE_NEEDS_WINDOWS_TOOLCHAIN = {"node": "Node.js", "web": "Node.js", "php": "PHP
 # Fetches one pinned download (run by the launcher's own Python as a logged
 # setup step): download unless the cached copy matches, refuse a file whose
 # SHA-256 differs from the pin, then optionally unzip all of it (minus the top
-# folder) or one member into a folder.
+# folder) or one member into a folder. A .tar.* (USER_TOOLCHAINS) unpacks
+# beside the folder and is then moved into place, so a half-unpacked
+# toolchain never looks installed; the archive is deleted after, as the
+# unpacked folder is the copy kept.
 # ponytail: needs sys.executable to be a Python — a frozen build needs another runner.
-WINE_FETCH = r"""
-import hashlib, os, shutil, sys, urllib.request, zipfile
+FETCH = r"""
+import hashlib, os, shutil, sys, tarfile, urllib.request, zipfile
 url, dest, sha = sys.argv[1:4]
 def digest(p):
     with open(p, "rb") as f:
@@ -567,7 +570,20 @@ if not (os.path.isfile(dest) and digest(dest) == sha):
         sys.exit(f"Checksum mismatch: {url} is not the pinned file. Nothing "
                  "of it was used.")
     os.replace(part, dest)
-if len(sys.argv) > 4:
+if len(sys.argv) > 4 and ".tar." in os.path.basename(dest):
+    out = os.path.abspath(sys.argv[4])
+    part = out + ".part"
+    shutil.rmtree(part, ignore_errors=True)
+    print("Unpacking...", flush=True)
+    with tarfile.open(dest) as t:
+        keep = [m.replace(name=m.name.partition("/")[2], deep=False)
+                for m in t.getmembers() if m.name.partition("/")[2]]
+        t.extractall(part, members=keep, filter="data")
+    shutil.rmtree(out, ignore_errors=True)
+    os.replace(part, out)
+    os.remove(dest)
+    print("Unpacked into " + out, flush=True)
+elif len(sys.argv) > 4:
     out, member = os.path.abspath(sys.argv[4]), (sys.argv[5:] or [None])[0]
     with zipfile.ZipFile(dest) as z:
         for m in z.infolist():
@@ -591,7 +607,7 @@ if len(sys.argv) > 4:
 # together (a layout) raced the same download, and would run one installer
 # twice into C:\ub\<dir>, rewriting DLLs the first tab's program has loaded.
 # Linux only, as is everything Wine.
-WINE_ONCE = r"""
+ONCE = r"""
 import fcntl, os, subprocess, sys
 lock, marker, cmd = sys.argv[1], sys.argv[2], sys.argv[3:]
 with open(lock, "w") as f:
@@ -606,6 +622,194 @@ with open(lock, "w") as f:
         sys.exit(0)
     sys.exit(subprocess.call(cmd))
 """
+
+
+# Toolchains the launcher fetches on Linux (x86-64) the first time a module
+# needs one, into ~/.unified_base/toolchains: no password, and current on any
+# distro. The packaged ones lag years behind on an LTS release — Mint 21 /
+# Ubuntu 22.04 have Node 12, Rust 1.75, JDK 11, no .NET 10 and Wine 6; 24.04
+# has Node 18 and Rust 1.75 — and Electron, current crates and net10.0 refuse
+# them. A system copy at or above the floor is used instead. Once fetched,
+# these come first on PATH for every module (activate_user_toolchains).
+# Pinned like WINE_TOOLCHAINS; each was checked against its project's own
+# SHA-256/512 (Wine's builder publishes none: Kron4ek/Wine-Builds, built from
+# WineHQ's source; the wow64 build needs no 32-bit libraries), and each ran
+# its demo on Mint 21's own libraries (glibc 2.35), 2026-10-05.
+#   cmd    — the program that proves it is there, in <dir>/<bin>
+#   floor  — the oldest system version used instead; the project's own
+#            files can raise it (toolchain_floor)
+#   env    — set while it is in use; "" is its folder
+#   rustup — the download is rustup-init, which installs Rust into ~/.cargo
+USER_TOOLCHAINS = {
+    "node": {
+        "label": "Node.js 24.21 LTS", "mb": 31, "cmd": "node", "bin": "bin",
+        "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
+        "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6",
+        "floor": (22, 12),          # Node 20 and older are past end of life
+    },
+    "dotnet": {
+        "label": ".NET SDK 10.0", "mb": 229, "cmd": "dotnet", "bin": "",
+        "url": "https://builds.dotnet.microsoft.com/dotnet/Sdk/10.0.401/"
+               "dotnet-sdk-10.0.401-linux-x64.tar.gz",
+        "sha256": "137268c8ad939c064ff1ee2a6fdf0899d8725377114ea012fbd1ad5fa2550418",
+        "floor": (8,),
+        "env": {"DOTNET_ROOT": "", "DOTNET_CLI_TELEMETRY_OPTOUT": "1",
+                "DOTNET_NOLOGO": "1"},
+    },
+    "java": {
+        "label": "Temurin JDK 25", "mb": 135, "cmd": "java", "bin": "bin",
+        "url": "https://github.com/adoptium/temurin25-binaries/releases/download/"
+               "jdk-25.0.4.1%2B1/OpenJDK25U-jdk_x64_linux_hotspot_25.0.4.1_1.tar.gz",
+        "sha256": "dbb698396d478e7fa2b1e50f4103324b2a99b90569ee27c33f2261f9215cf41e",
+        "floor": (8,), "env": {"JAVA_HOME": ""},
+    },
+    "mvn": {
+        "label": "Maven 3.9.16", "mb": 9, "cmd": "mvn", "bin": "bin",
+        "url": "https://dlcdn.apache.org/maven/maven-3/3.9.16/binaries/"
+               "apache-maven-3.9.16-bin.tar.gz",
+        "sha256": "80ffca22aed9e8b9713a232f3394fd81d7f20322df75efdb2b047dbd3e3a23bb",
+        "floor": (3, 9),
+    },
+    "cargo": {
+        "label": "Rust (rustup 1.29.1)", "mb": 20, "cmd": "cargo", "bin": "bin",
+        "url": "https://static.rust-lang.org/rustup/archive/1.29.1/"
+               "x86_64-unknown-linux-gnu/rustup-init",
+        "sha256": "dda7234360b7f578ca8b0ddcb80145646fa61a67c1720a5abc7051b35c9fcb71",
+        "floor": (1, 80), "rustup": True,
+    },
+    "wine": {
+        "label": "Wine 11.0", "mb": 70, "cmd": "wine", "bin": "bin",
+        "url": "https://github.com/Kron4ek/Wine-Builds/releases/download/11.0/"
+               "wine-11.0-amd64-wow64.tar.xz",
+        "sha256": "39574efa1132c3ca0d5c77dd2eddbe4a49cca0d6cc2c290ff4924493a1c40314",
+        "floor": (10,),             # the oldest Wine the Windows demos ran on
+    },
+}
+USER_TOOLCHAINS_OK = IS_LINUX and platform.machine() == "x86_64"
+
+# Runs a downloaded program (rustup-init) after making it executable.
+RUN_DOWNLOADED = ("import os, sys; os.chmod(sys.argv[1], 0o755); "
+                  "os.execv(sys.argv[1], sys.argv[1:])")
+
+
+def user_toolchain_dir(name: str) -> Path:
+    """Where a fetched toolchain lives. Rust stays where rustup puts it, so
+    the user's own terminal finds it the usual way."""
+    if USER_TOOLCHAINS[name].get("rustup"):
+        return Path(os.environ.get("CARGO_HOME") or Path.home() / ".cargo")
+    return APP_DIR / "toolchains" / name
+
+
+def user_toolchain_ready(name: str) -> bool:
+    tc = USER_TOOLCHAINS[name]
+    return (user_toolchain_dir(name) / tc["bin"] / tc["cmd"]).is_file()
+
+
+def activate_user_toolchains() -> None:
+    """Put every fetched toolchain first on PATH, with the variables it
+    needs, for this process and so for everything it starts.
+    ponytail: one PATH for all modules — a project that wants the system's
+    older JDK next to a fetched one sets JAVA_HOME/PATH in its own
+    Environment variables."""
+    if not USER_TOOLCHAINS_OK:
+        return
+    path = os.environ.get("PATH", "").split(os.pathsep)
+    for name, tc in USER_TOOLCHAINS.items():
+        if not user_toolchain_ready(name):
+            continue
+        home = user_toolchain_dir(name)
+        b = str(home / tc["bin"])
+        if b in path:
+            path.remove(b)
+        path.insert(0, b)
+        for k, v in tc.get("env", {}).items():
+            os.environ[k] = v or str(home)
+    os.environ["PATH"] = os.pathsep.join(path)
+
+
+_VERSIONS: dict = {}
+
+
+def tool_version(cmd: str, path: str) -> tuple | None:
+    """A program's version as numbers — (12, 22), (1, 75) — or None when it
+    can't be read. For dotnet, the newest SDK; (0,) when it has none (a
+    runtime-only install builds nothing)."""
+    if path not in _VERSIONS:
+        args = {"java": ["-version"], "dotnet": ["--list-sdks"],
+                "mvn": ["-v"]}.get(cmd, ["--version"])
+        try:
+            r = subprocess.run([path, *args], capture_output=True, text=True,
+                               timeout=30)
+            text = r.stdout + r.stderr
+        except (OSError, subprocess.SubprocessError):
+            text = ""
+        found = [(int(a), int(b)) for a, b in re.findall(r"(\d+)\.(\d+)", text)]
+        if cmd == "dotnet":
+            _VERSIONS[path] = max(found) if found else (0,)
+        else:
+            _VERSIONS[path] = found[0] if found else None
+    return _VERSIONS[path]
+
+
+def toolchain_floor(name: str, proj: Path) -> tuple:
+    """The oldest version of a toolchain this project can use: the general
+    floor, raised by what the project declares — its .NET target, its Java
+    release, its Node engine, a v4 Cargo.lock or a rust-version."""
+    def read(*names):
+        out = ""
+        for n in names:
+            for f in proj.glob(n):
+                try:
+                    out += f.read_text(errors="replace")
+                except OSError:
+                    pass
+        return out
+    found = [USER_TOOLCHAINS[name]["floor"]]
+    if name == "dotnet":
+        for tfms in re.findall(r"<TargetFrameworks?>([^<]*)<",
+                               read("*.csproj", "*/*.csproj")):
+            found += [(int(m),) for m in re.findall(r"net(\d+)\.", tfms)]
+    elif name == "java":
+        found += [(int(m),) for m in re.findall(
+            r"<(?:maven\.compiler\.(?:release|source|target)|release)>\s*(\d+)",
+            read("pom.xml"))]
+        found += [(int(m),) for m in re.findall(
+            r"(?:JavaLanguageVersion\.of\(|JavaVersion\.VERSION_|"
+            r"sourceCompatibility\s*=\s*['\"]?)(\d+)",
+            read("build.gradle", "build.gradle.kts"))]
+    elif name == "node":
+        try:
+            eng = json.loads(read("package.json") or "{}") \
+                .get("engines", {}).get("node", "")
+        except (ValueError, AttributeError):
+            eng = ""
+        m = re.search(r">=?\s*v?(\d+)(?:\.(\d+))?", str(eng))
+        if m:
+            found.append((int(m[1]), int(m[2] or 0)))
+    elif name == "cargo":
+        if re.search(r"^version\s*=\s*4", read("Cargo.lock"), re.M):
+            found.append((1, 78))           # the first cargo that reads v4
+        m = re.search(r'^rust-version\s*=\s*"(\d+)\.(\d+)', read("Cargo.toml"),
+                      re.M)
+        if m:
+            found.append((int(m[1]), int(m[2])))
+    return max(found)
+
+
+def toolchain_shortfall(name: str, proj: Path) -> str | None:
+    """Why this project can't use the toolchain on PATH, or None if it can.
+    A version that can't be read is given the benefit of the doubt."""
+    if not USER_TOOLCHAINS_OK or user_toolchain_ready(name):
+        return None
+    cmd = USER_TOOLCHAINS[name]["cmd"]
+    path = shutil.which(cmd)
+    if not path:
+        return f"{cmd} isn't installed"
+    have, need = tool_version(cmd, path), toolchain_floor(name, proj)
+    if have is None or have >= need:
+        return None
+    return (f"{cmd} here is {'.'.join(map(str, have))}, older than the "
+            f"{'.'.join(map(str, need))}+ it needs")
 
 
 def wine_path(p) -> str:
@@ -3572,6 +3776,7 @@ class ModuleTab(QWidget):
         self._pending_install = None     # toolchain install cmd, if offered
         self._install_purpose = None     # "toolchain" | "xterm" | "wsl" — drives done handler
         self._install_proc: QProcess | None = None
+        self._fetched: list = []        # USER_TOOLCHAINS this start fetched
         self._term_proc: QProcess | None = None   # mini command-bar process
         self.terminal: "TerminalHost | None" = None  # full xterm, lazy
         self._highlight = False      # border drawn while this tab is picked
@@ -4382,7 +4587,7 @@ class ModuleTab(QWidget):
 
         def once(marker, label, prog, args, *rest):
             return (label, sys.executable,
-                    ["-c", WINE_ONCE, lock, str(marker), prog] + args,
+                    ["-c", ONCE, lock, str(marker), prog] + args,
                     str(cache), *rest)
         steps = []
         tool = self._wine_tool()
@@ -4391,7 +4596,7 @@ class ModuleTab(QWidget):
             steps.append(once(
                 tool, f"downloading {tc['label']} ({tc['mb']} MB, first run)",
                 sys.executable,
-                ["-c", WINE_FETCH, tc["url"], str(file), tc["sha256"]]
+                ["-c", FETCH, tc["url"], str(file), tc["sha256"]]
                 + ([] if tc.get("install") else [str(folder)])))
             if tc.get("install"):
                 win_dir = "C:\\ub\\" + tc["dir"]
@@ -4408,9 +4613,77 @@ class ModuleTab(QWidget):
             steps.append(once(
                 dll, f"downloading {dll.name} for {tc['label']} ({x['mb']} MB)",
                 sys.executable,
-                ["-c", WINE_FETCH, x["url"], str(file), x["sha256"],
+                ["-c", FETCH, x["url"], str(file), x["sha256"],
                  str(folder / x["to"]), x["member"]]))
         return steps
+
+    def _needed_toolchains(self) -> dict:
+        """USER_TOOLCHAINS this module needs fetched before it can start,
+        each with the reason (missing, or older than the project needs)."""
+        if not USER_TOOLCHAINS_OK or self.bridge == "wsl":
+            return {}
+        rt, proj = self.cfg.runtime, Path(self.cfg.project_dir)
+        if self.bridge == "wine" and (rt == "docker" or
+                                      rt in WINE_NEEDS_WINDOWS_TOOLCHAIN):
+            return {}                   # can't run here at all; start() says why
+        want = ["wine"] if self.bridge == "wine" else []
+        want += {"node": ["node"], "web": ["node"], "csharp": ["dotnet"],
+                 "java": ["java", "mvn"] if (proj / "pom.xml").is_file()
+                 else ["java"]}.get(rt, [])
+        if rt == "binary" and (proj / "Cargo.toml").is_file():
+            want.append("cargo")
+        need = {n: toolchain_shortfall(n, proj) for n in want}
+        if self.bridge == "wine" and "cargo" in want and not need["cargo"] \
+                and not shutil.which("rustup"):
+            # A Windows build adds a target, which only rustup can.
+            need["cargo"] = "rustup isn't installed (a Windows build needs it)"
+        return {n: why for n, why in need.items() if why}
+
+    def _user_toolchain_steps(self, names) -> list:
+        """Fetch each toolchain once, under its own lock: a layout starting
+        five Node modules downloads Node once."""
+        cache = APP_DIR / "downloads"
+        cache.mkdir(parents=True, exist_ok=True)
+        (APP_DIR / "toolchains").mkdir(exist_ok=True)
+        steps = []
+        for name in names:
+            tc = USER_TOOLCHAINS[name]
+            home = user_toolchain_dir(name)
+            marker = str(home / tc["bin"] / tc["cmd"])
+            lock = str(cache / f"{name}.lock")
+            file = str(cache / tc["url"].rsplit("/", 1)[-1])
+            fetch = [sys.executable, "-c", FETCH, tc["url"], file, tc["sha256"]]
+            steps.append((f"downloading {tc['label']} ({tc['mb']} MB, first run)",
+                          sys.executable, ["-c", ONCE, lock, marker, *fetch]
+                          + ([] if tc.get("rustup") else [str(home)]),
+                          str(cache)))
+            if tc.get("rustup"):
+                steps.append(("installing Rust with rustup (~100 MB more)",
+                              sys.executable,
+                              ["-c", ONCE, lock, marker, sys.executable, "-c",
+                               RUN_DOWNLOADED, file, "-y", "--no-modify-path",
+                               "--profile", "minimal"], str(cache)))
+        return steps
+
+    def _fetch_toolchains(self, need: dict) -> None:
+        """Download what the module needs, then start it again."""
+        if self._fetched == sorted(need):
+            # Just fetched, and still not usable: say so, never loop.
+            self._fetched = []
+            self._log("The downloaded toolchain still isn't usable: "
+                      + "; ".join(need.values()) + ". See the log above.")
+            self._set_status("missing toolchain")
+            return
+        for name, why in need.items():
+            self._log(f"{USER_TOOLCHAINS[name]['label']}: {why}. Fetching it "
+                      f"for your user (no password needed), once — into "
+                      f"{user_toolchain_dir(name)}.")
+
+        def fetched():
+            self._fetched = sorted(need)    # a failed download may retry; this may not
+            activate_user_toolchains()
+            self.start()
+        self._run_command_chain(self._user_toolchain_steps(need), fetched)
 
     def _bridge_steps(self) -> list:
         """Setup the bridge itself needs before the module's own steps."""
@@ -4463,6 +4736,12 @@ class ModuleTab(QWidget):
                 return
             self.cfg.runtime = found[0]
             self._log(f"Detected runtime: {found[0]}")
+        activate_user_toolchains()          # another module may have fetched one
+        need = self._needed_toolchains()
+        if need:
+            self._fetch_toolchains(need)
+            return
+        self._fetched = []
         problem = self._bridge_problem()
         if problem:
             self._log(problem)
@@ -6936,9 +7215,15 @@ def selftest() -> int:
                 "not set up — run setup-wsl.ps1 (Set Up Linux Programs)")
     else:
         w = wine_program()
-        if w:
+        short = toolchain_shortfall("wine", BASE_DIR)
+        if w and not short:
             code, out = run([w, "--version"])
             row("Wine (Windows modules)", code == 0, out)
+        elif short:
+            tc = USER_TOOLCHAINS["wine"]
+            row("Wine (Windows modules)", None,
+                f"{short} — {tc['label']} ({tc['mb']} MB) downloads itself "
+                "the first time a Windows module starts")
         else:
             row("Wine (Windows modules)", False,
                 toolchain_install_cmd("wine") or "not installed")
@@ -7026,6 +7311,7 @@ def install_crash_guard(log_file: Path, report=None) -> logging.Handler | None:
 
 
 def main():
+    activate_user_toolchains()
     if "--selftest" in sys.argv:
         sys.exit(selftest())
     if IS_WINDOWS:

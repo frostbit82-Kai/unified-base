@@ -51,6 +51,18 @@ defaults. See `installer/README.md`. **Releases are built by CI**
 (`.github/workflows/release.yml`): a `v<VERSION>` tag makes a draft release
 with both installers; the user tests the drafts and presses Publish.
 
+**Toolchains fetch themselves on Linux** (2026-10-05, after the first real
+Mint 21 run: Install gave Rust 1.75, Node 12 was there, no .NET 10 package,
+JDK 11 — every non-Python demo failed). `USER_TOOLCHAINS` pins Node, .NET
+SDK, Temurin, Maven, rustup-init and a portable Wine; a module's first start
+fetches what `toolchain_shortfall` says is missing or below
+`toolchain_floor` (general floor raised by the project's own files), under
+`ONCE` locks, into `~/.unified_base/toolchains`. `activate_user_toolchains`
+prepends them to `os.environ["PATH"]` (startup, and every start), so
+`which()` and every child see them. x86-64 Linux only; Windows keeps
+winget. Bumping a pin: new url + sha256 checked against the project's own
+published hash, then the Mint sandbox run in `installer/README.md`.
+
 **User preferences.** The user is on a fixed plan: never warn about token cost
 or scale work down to save it. Admin/root installs (apt, UAC prompts) are the
 user's to run — hand them the command; never type a password.
@@ -85,7 +97,7 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Linux: 82 pass (2026-10-05, on
+- `python test_core.py` (inside `.venv`). Linux: 89 pass (2026-10-05, on
   PySide6). Real Windows: 75 pass, 10 skipped (2026-10-05, on PySide6; +3:
   check_console_python, check_x_server_on_demand, check_wsl_setup_button).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
@@ -179,7 +191,7 @@ on both OSes). The first three languages run on their own Windows build
 inside the module's Wine prefix — `WINE_TOOLCHAINS`, the mirror of WSL
 holding Linux toolchains: pinned official downloads (Python 3.12.10,
 Temurin 25.0.4.1, RubyInstaller 3.4.11-1, plus Microsoft's ucrtbase.dll from
-the .NET Core 3.1.32 runtime pack), SHA-256-checked by `WINE_FETCH`,
+the .NET Core 3.1.32 runtime pack), SHA-256-checked by `FETCH`,
 installed into `C:\ub\<dir>` on first start. All four demos embed, restart
 and stop on Linux. docker-windows explains itself.
 Existing configs keep the platform they were added with: on Windows,
@@ -277,7 +289,7 @@ process list shows whatever runs, claude.exe included).
 - Loading a layout starts every module in one go. Two PHP dev servers both
   got :8000 (`free_port` now skips ports it handed out in the last 30 s;
   `Runtime.serves()` answers without reserving one), and two tabs of one
-  Windows language raced its toolchain download/installer (`WINE_ONCE`:
+  Windows language raced its toolchain download/installer (`ONCE`:
   per-toolchain lock, skip once the tool exists). Test simultaneous starts.
 - Windows toolchains under Wine: run them by their `C:\ub\…` path, never
   Z: — from `Z:\home\…\.unified_base\…` Python's Tcl can't find init.tcl.

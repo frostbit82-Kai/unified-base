@@ -80,14 +80,17 @@ glibc and libraries, read-only, no root:
 
     bwrap --ro-bind <mint-root> / --dev /dev --proc /proc --ro-bind /sys /sys \
           --tmpfs /tmp --bind /tmp/.X11-unix/X77 /tmp/.X11-unix/X77 \
+          --tmpfs /run --ro-bind /run/systemd/resolve /run/systemd/resolve \
           --bind <scratch-home> /home/tim --bind <extracted-dir> /home/tim/Downloads \
           --clearenv --setenv HOME /home/tim --setenv DISPLAY :77 \
           --setenv PATH /home/tim/.local/bin:/usr/bin:/bin --setenv XDG_RUNTIME_DIR /tmp \
           bash -c 'cd ~/Downloads/UnifiedBase-*/ && ./install.sh && unified-base --selftest'
 
 with `Xvfb :77` on the host. Do not unshare the PID namespace: the X server
-reports host PIDs, and window lookup matches on them. There is no DNS inside
-(Mint's resolver is not running), so anything that downloads fails there.
+reports host PIDs, and window lookup matches on them. The `/run/systemd/resolve`
+bind gives it the host's DNS (Mint's resolv.conf points there), so module
+setup and the toolchain downloads work. New mount points need a writable
+parent: bind extra folders under a `--tmpfs /mnt`.
 
 ## Windows
 

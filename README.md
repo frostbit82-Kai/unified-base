@@ -35,7 +35,20 @@ Self-Test* in the Start menu).
 ## Supported runtimes
 
 When you add a folder, the base detects its runtime (asking if more than one
-matches) and installs/builds dependencies the same way a developer would:
+matches) and installs/builds dependencies the same way a developer would.
+
+**Toolchains fetch themselves on Linux.** If a module's language is missing,
+or older than the project needs, its first start downloads a current one for
+the user — no password — into `~/.unified_base/toolchains`, first on PATH for
+every module from then on: Node.js 24 LTS, .NET SDK 10, Temurin JDK 25,
+Maven 3.9, Rust (rustup, into `~/.cargo`) and, for Windows modules, Wine 11.
+"Too old" is the general floor (Node 22.12, Rust 1.80, Wine 10) raised by
+what the project declares: its `TargetFramework`, Maven/Gradle Java release,
+`engines.node`, a v4 `Cargo.lock`, a `rust-version`. Each download is pinned
+and SHA-256-checked (`USER_TOOLCHAINS` in `main.py`). LTS distros need this:
+Mint 21 / Ubuntu 22.04 package Node 12, Rust 1.75, JDK 11 and no .NET 10.
+PHP, Ruby and Docker still come from the package manager (the **Install**
+button, which asks for a password); on Windows every Install button is winget.
 
 | Runtime | Detected by | Set up with | Launched with |
 |---|---|---|---|
@@ -109,8 +122,9 @@ A module bound to one OS shows a tiny mark on its tab — the Windows four
 panes or a Tux — and hovering it says how it runs on this machine. Modules
 that run anywhere get no mark.
 
-**Wine (Linux running Windows apps).** Install it once
-(`sudo apt install wine wine64`); the first Windows module builds a shared
+**Wine (Linux running Windows apps).** Nothing to install: without a Wine 10
+or newer, the first Windows module downloads Wine 11 (a portable wow64 build,
+no 32-bit libraries needed; see above), then builds a shared
 prefix at `~/.unified_base/wine/default`. Wine draws real X11 windows, so
 Windows apps embed into panes exactly like Linux ones. Builds still run
 natively — a Windows-only .NET app is published for `win-x64` by the Linux

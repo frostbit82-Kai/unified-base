@@ -2330,10 +2330,10 @@ def _check_wine_runtimes():
                 (Path(d) / "pfx").mkdir(exist_ok=True)
                 (Path(d) / "pfx" / "system.reg").write_text("")
                 steps = tab._toolchain_steps()
-                # each runs under the toolchain's lock: [-c, WINE_ONCE, lock,
+                # each runs under the toolchain's lock: [-c, ONCE, lock,
                 # marker, program, *args]
-                assert all(s[2][1] == main.WINE_ONCE for s in steps), steps
-                fetch = [s[2][4:] for s in steps if main.WINE_FETCH in s[2]]
+                assert all(s[2][1] == main.ONCE for s in steps), steps
+                fetch = [s[2][4:] for s in steps if main.FETCH in s[2]]
                 assert fetch and fetch[0][3] == tc["url"], (rt, steps)
                 assert fetch[0][5] == tc["sha256"]
                 inst = [s for s in steps
@@ -2357,7 +2357,7 @@ def _check_wine_runtimes():
     with tempfile.TemporaryDirectory() as d:
         mark = Path(d) / "tool.exe"
         once = lambda: subprocess.run(
-            [sys.executable, "-c", main.WINE_ONCE, str(Path(d) / "x.lock"),
+            [sys.executable, "-c", main.ONCE, str(Path(d) / "x.lock"),
              str(mark), "sh", "-c", 'echo ran > "$0"; exit 3', str(mark)],
             capture_output=True, text=True, timeout=30)
         r = once()
@@ -2383,7 +2383,7 @@ def check_wine_fetch():
             z.writestr("runtimes/win-x64/native/ucrtbase.dll", b"MZ crt")
         sha = hashlib.sha256(src.read_bytes()).hexdigest()
         url = src.as_uri()                         # urllib reads file:// too
-        run = lambda *a: subprocess.run([sys.executable, "-c", main.WINE_FETCH,
+        run = lambda *a: subprocess.run([sys.executable, "-c", main.FETCH,
                                          *map(str, a)], capture_output=True,
                                         text=True, timeout=60)
         r = run(url, d / "dl.zip", "0" * 64)
@@ -2398,6 +2398,144 @@ def check_wine_fetch():
         assert r.returncode == 0 and "Downloading" not in r.stdout, r  # cached
         assert [p.name for p in (d / "one").iterdir()] == ["ucrtbase.dll"]
 
+
+
+@linux_host
+def check_fetch_tarball():
+    """A Linux toolchain's tarball unpacks minus its top folder (in .NET's,
+    that is "."), keeps symlinks and exec bits, appears only once complete,
+    and the archive goes once unpacked: the folder is the copy kept."""
+    import hashlib
+    import io
+    import tarfile
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        for top, comp in (("node-v1", "xz"), (".", "gz")):
+            src = d / f"pkg.tar.{comp}"
+            with tarfile.open(src, f"w:{comp}") as t:
+                for name, data, link in (("bin/node", b"#!/bin/sh\n", None),
+                                         ("bin/npm", b"", "../lib/cli.js"),
+                                         ("lib/cli.js", b"x", None)):
+                    i = tarfile.TarInfo(f"{top}/{name}")
+                    if link:
+                        i.type, i.linkname = tarfile.SYMTYPE, link
+                    else:
+                        i.size, i.mode = len(data), 0o755
+                    t.addfile(i, None if link else io.BytesIO(data))
+            sha = hashlib.sha256(src.read_bytes()).hexdigest()
+            dest, out = d / f"dl.tar.{comp}", d / f"tc-{comp}"
+            r = subprocess.run([sys.executable, "-c", main.FETCH, src.as_uri(),
+                                str(dest), sha, str(out)],
+                               capture_output=True, text=True, timeout=60)
+            assert r.returncode == 0, r.stderr
+            node = out / "bin" / "node"
+            assert node.is_file() and os.access(node, os.X_OK), \
+                sorted(map(str, out.rglob("*")))
+            assert os.readlink(out / "bin" / "npm") == "../lib/cli.js"
+            assert (out / "bin" / "npm").read_text() == "x"
+            assert not dest.exists() and not Path(f"{out}.part").exists()
+
+
+@linux_host
+def check_tool_version():
+    """Versions read from each toolchain's own output, wherever it prints
+    them; a dotnet with no SDK counts as none, an unreadable one as unknown."""
+    with tempfile.TemporaryDirectory() as d:
+        def fake(name, text, fd=1):
+            p = Path(d) / name
+            p.write_text(f"#!/bin/sh\ncat >&{fd} <<'X'\n{text}\nX\n")
+            p.chmod(0o755)
+            return str(p)
+        main._VERSIONS.clear()
+        v = main.tool_version
+        assert v("node", fake("node", "v12.22.9")) == (12, 22)
+        assert v("java", fake("java", 'openjdk version "11.0.21" 2023-10-17',
+                              2)) == (11, 0)
+        assert v("dotnet", fake("dotnet", "6.0.428 [/usr/lib/dotnet/sdk]\n"
+                                          "8.0.120 [/usr/lib/dotnet/sdk]")) == (8, 0)
+        assert v("dotnet", fake("dotnet-rt", "")) == (0,)
+        assert v("cargo", fake("cargo", "cargo 1.75.0 (1d8b05cdd 2023-11-20)")) \
+            == (1, 75)
+        assert v("wine", fake("wine", "wine-10.0 (Ubuntu 10.0~repack-12)")) \
+            == (10, 0)
+        assert v("mvn", fake("mvn", "JAVA_HOME is not defined", 2)) is None
+    main._VERSIONS.clear()
+
+
+def check_toolchain_floor():
+    """What a project declares raises the version it needs."""
+    with tempfile.TemporaryDirectory() as d:
+        p, f = Path(d), main.toolchain_floor
+        assert f("node", p) == (22, 12) and f("java", p) == (8,)
+        assert f("dotnet", p) == (8,)
+        (p / "Demo.csproj").write_text(
+            "<Project><PropertyGroup><TargetFramework>net10.0</TargetFramework>"
+            "</PropertyGroup></Project>")
+        assert f("dotnet", p) == (10,)
+        (p / "pom.xml").write_text(
+            "<properties><maven.compiler.release>17</maven.compiler.release>"
+            "</properties>")
+        assert f("java", p) == (17,)
+        (p / "package.json").write_text('{"engines": {"node": ">=24.1"}}')
+        assert f("node", p) == (24, 1)
+        (p / "Cargo.lock").write_text("# generated\nversion = 4\n")
+        assert f("cargo", p) == (1, 80)          # v4 needs 1.78, under the floor
+        (p / "Cargo.toml").write_text('[package]\nrust-version = "1.85"\n')
+        assert f("cargo", p) == (1, 85)
+
+
+@linux_host
+def check_needed_toolchains():
+    """A module's first start fetches what it lacks (missing, or older than
+    the project needs) and nothing once the fetched copy is there — which
+    then comes first on PATH, once."""
+    _app()
+    keep = dict(os.environ)
+    with tempfile.TemporaryDirectory() as d:
+        d = Path(d)
+        _use_app_dir(d / "app")
+        bin_, proj = d / "bin", d / "proj"
+        bin_.mkdir()
+        proj.mkdir()
+        (proj / "package.json").write_text("{}")
+        (bin_ / "node").write_text("#!/bin/sh\necho v12.22.9\n")
+        (bin_ / "node").chmod(0o755)
+        os.environ["PATH"] = str(bin_)           # an old node, no Wine
+        main._VERSIONS.clear()
+
+        def needs(rt, platform=""):
+            tab = main.ModuleTab(main.ModuleConfig(
+                name=rt, project_dir=str(proj), entry="", runtime=rt,
+                platform=platform))
+            try:
+                return tab._needed_toolchains(), tab
+            finally:
+                tab.shutdown()
+        try:
+            need, tab = needs("node")
+            assert list(need) == ["node"] and "12.22" in need["node"], need
+            steps = tab._user_toolchain_steps(["node", "cargo"])
+            assert [s[2][1] for s in steps] == [main.ONCE] * 3, steps
+            assert main.USER_TOOLCHAINS["node"]["sha256"] in steps[0][2]
+            assert steps[0][2][-1] == str(main.user_toolchain_dir("node"))
+            assert main.RUN_DOWNLOADED in steps[2][2]
+            assert "--no-modify-path" in steps[2][2]
+            assert list(needs("python", "windows")[0]) == ["wine"]
+            assert needs("php", "windows")[0] == {}   # can't run here at all
+            mine = main.user_toolchain_dir("node") / "bin" / "node"
+            mine.parent.mkdir(parents=True)
+            mine.write_text("#!/bin/sh\necho v24.21.0\n")
+            mine.chmod(0o755)
+            main.activate_user_toolchains()
+            main.activate_user_toolchains()
+            assert shutil.which("node") == str(mine)
+            assert os.environ["PATH"].split(os.pathsep).count(
+                str(mine.parent)) == 1
+            assert needs("node")[0] == {}
+        finally:
+            os.environ.clear()
+            os.environ.update(keep)
+            main._VERSIONS.clear()
 
 def check_launch_after_setup():
     """What a build entry runs is asked for after its setup has built it."""
@@ -2478,6 +2616,8 @@ if __name__ == "__main__":
                check_wine_family, check_private_wineprefix_boot,
                check_os_badge, check_windows_only_evidence,
                check_wine_runtimes, check_wine_fetch,
+               check_fetch_tarball, check_tool_version,
+               check_toolchain_floor, check_needed_toolchains,
                check_launch_after_setup,
                check_x11_hints):
         if ON_WINDOWS and fn in LINUX_HOST:

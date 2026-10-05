@@ -92,8 +92,9 @@ cat <<MSG
 Installed. Launch it from your applications menu (Development), or run:  unified-base
 
 New here? File > Load Demo Modules shows what it does with programs in a dozen
-languages. A module whose language is not installed yet gets an Install button
-in its pane (your password is asked for there, by the system).
+languages. A module's first start downloads its language if it is missing or
+too old (Node, .NET, Java, Rust, Wine: no password). PHP, Ruby and Docker get
+an Install button in their pane, and the system asks for your password there.
 
 Your modules, settings and environments live in ~/.unified_base and survive
 upgrades and uninstalling.
