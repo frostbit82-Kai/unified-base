@@ -121,6 +121,8 @@ QT_QPA_PLATFORM=offscreen "${PYI[@]}" "$REPO/test_core.py" > "$BUILD/test_core.l
 grep -q "ALL CHECKS PASS" "$BUILD/test_core.log" || {
     echo "test_core.py did not finish, see $BUILD/test_core.log" >&2; exit 1; }
 echo "    test_core: $(grep -c '^ok ' "$BUILD/test_core.log") pass, $(grep -c '^skip ' "$BUILD/test_core.log") skipped"
+# Byte-code made by the checks is this machine's; the first start makes its own.
+find "$STAGE/app" -name __pycache__ -prune -exec rm -rf {} +
 
 echo "==> [6/6] Compressing"
 tar -C "$OUT" -czf "$OUT/$NAME.tar.gz" "$NAME"
