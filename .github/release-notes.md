@@ -8,7 +8,7 @@ click **More info**, then **Run anyway**.
 `UnifiedBase-linux-x86_64.tar.gz` and double-click **Install Unified Base** (or run `./install.sh`).
 Installs to `~/.local`, no root. Your file manager may ask you to trust the launcher first.
 
-The languages modules are written in (Node.js, .NET, Java, Rust, and on Windows Ruby and PHP too) download
+The languages modules are written in (Node.js, .NET, Java, Rust, on Windows Ruby and PHP too, and on Linux Wine for Windows programs) download
 themselves for your user, checksum-verified, the first time a module needs one.
 
 Start with **File ▸ Load Demo Modules**. Setup guide: https://bomsaisoftware.com/software/unified-base-guide

@@ -121,10 +121,8 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Linux: 89 pass (2026-10-05, on
-  PySide6), 92 expected after the Windows toolchain commit (+3, both
-  OSes: check_windows_toolchains, check_wsl_toolchains, check_once_lock —
-  not yet run on Linux). Real Windows: 79 pass, 13 skipped (2026-10-05).
+- `python test_core.py` (inside `.venv`). Linux: 92 pass (2026-10-05, on
+  PySide6, 0.9.2). Real Windows: 79 pass, 13 skipped (2026-10-05).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
