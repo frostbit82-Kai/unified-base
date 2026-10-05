@@ -164,13 +164,45 @@ begin
       'File > Exit, then uninstall again.', mbError, MB_OK, IDOK);
 end;
 
+{ Everything Unified Base made outside its folder: the user data folder, the
+  Linux modules' environments in WSL's home, and Edge profiles a crash left
+  in %TEMP% (web modules; normally removed on Stop). Toolchains, WSL, VcXsrv
+  and Docker are programs of their own and stay. }
+procedure DeleteData(const Data: String);
+var
+  Distro: String;
+  Code: Integer;
+begin
+  DelTree(Data, True, True, True);
+  DelTree(GetTempDir + 'ub_web_*', False, True, True);
+  if FileExists(ExpandConstant('{sys}\wsl.exe')) and RegQueryStringValue(HKCU,
+       'Software\Microsoft\Windows\CurrentVersion\Lxss', 'DefaultDistribution',
+       Distro) then
+    Exec(ExpandConstant('{sys}\wsl.exe'), '--exec sh -c "cd && rm -rf .unified_base"',
+      '', SW_HIDE, ewWaitUntilTerminated, Code);
+end;
+
+{ Asked, No by default: the data includes the projects made with New Blank
+  Tab, which are the user's own work. /DELETEDATA=yes answers yes for a
+  silent uninstall. }
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var
   Data: String;
 begin
   Data := ExpandConstant('{%USERPROFILE}\.unified_base');
-  if (CurUninstallStep = usPostUninstall) and DirExists(Data) then
-    SuppressibleMsgBox('Unified Base is removed. Your modules, settings and ' +
-      'environments are kept in ' + Data + ' - delete that folder yourself ' +
-      'if you want them gone.', mbInformation, MB_OK, IDOK);
+  if (CurUninstallStep <> usPostUninstall) or not DirExists(Data) then
+    Exit;
+  if (Lowercase(ExpandConstant('{param:DELETEDATA|no}')) = 'yes') or
+     (not UninstallSilent and (MsgBox('Unified Base is removed.' + #13#10#13#10 +
+       'Also delete your Unified Base data? That is your module list, layouts ' +
+       'and settings, every module''s environment and log, and the projects ' +
+       'you made with New Blank Tab:' + #13#10#13#10 + Data + #13#10#13#10 +
+       'Project folders you added from elsewhere are not touched. Keep the ' +
+       'data to pick up where you left off after reinstalling.',
+       mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES)) then begin
+    DeleteData(Data);
+    if DirExists(Data) then
+      SuppressibleMsgBox('Some of ' + Data + ' could not be deleted (a file in ' +
+        'use?). Delete what is left yourself.', mbError, MB_OK, IDOK);
+  end;
 end;

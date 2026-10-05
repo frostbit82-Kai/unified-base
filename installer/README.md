@@ -115,8 +115,12 @@ What the setup does:
 - **Checks it starts**: after copying, it imports `main` and opens a
   `QApplication` with the bundled Python; a failure shows the error. It also
   leaves `main.py`'s byte-code.
-- **Uninstall** removes the folder, build output included, and says that
-  `%USERPROFILE%\.unified_base` is kept.
+- **Uninstall** removes the folder, build output included, then asks
+  whether to delete the user's data too — No by default, since it holds the
+  New Blank Tab projects. Yes deletes `%USERPROFILE%\.unified_base`, the
+  Linux modules' `~/.unified_base` inside WSL (when WSL has a default
+  distro) and any `%TEMP%\ub_web_*` Edge profiles a crash left.
+  `/DELETEDATA=yes` does it on a silent uninstall.
 
 ### What the build does, and the traps
 

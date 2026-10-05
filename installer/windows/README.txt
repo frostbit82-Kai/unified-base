@@ -99,13 +99,17 @@ WHERE THINGS ARE
     %USERPROFILE%\.unified_base            your modules, layouts, settings,
                                            blank-tab projects and every
                                            module's environment. Kept on
-                                           upgrade and uninstall.
+                                           upgrade; uninstalling asks.
 
 The demo programs build inside the program folder, so after an upgrade each
 demo rebuilds the first time you start it.
 
 To upgrade:  run the new setup the same way (quit Unified Base first).
 To remove:   Settings > Apps > Installed apps > Unified Base > Uninstall.
+             It then asks whether to delete your data too (No by default,
+             so a reinstall picks up where you left off). Yes also removes
+             Linux modules' environments inside WSL. Unattended:
+             unins000.exe /VERYSILENT /DELETEDATA=yes
 Third-party licences: the program folder, app\licenses
 
 
