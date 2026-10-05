@@ -57,11 +57,11 @@ plat=offscreen
 if ! QT_QPA_PLATFORM=$plat "$PY" -E -s -c '
 import sys; sys.path.insert(0, sys.argv[1])
 import main
-from PyQt6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication
 QApplication(["unified-base"])' "$APPDIR/app"; then
     echo
     echo "Unified Base did not start. The error above is the real reason." >&2
-    missing="$(ldd "$APPDIR"/runtime/lib/python3*/site-packages/PyQt6/Qt6/plugins/platforms/libqxcb.so \
+    missing="$(ldd "$APPDIR"/runtime/lib/python3*/site-packages/PySide6/Qt/plugins/platforms/libqxcb.so \
                2>/dev/null | awk '/not found/ {print $1}' | tr '\n' ' ')"
     if [ -n "$missing" ]; then
         echo "Missing system libraries: $missing" >&2

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Smallest runnable check for Unified Base's non-GUI logic.
 
-Run:  python3 test_core.py   (inside the .venv — needs PyQt6 importable)
+Run:  python3 test_core.py   (inside the .venv — needs PySide6 importable)
 No framework — plain asserts. Fails loudly if core logic breaks.
 """
 import atexit
@@ -56,7 +56,7 @@ def _app():
     "Must construct a QApplication before a QWidget".
     """
     global _APP
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     _APP = QApplication.instance() or QApplication([])
     return _APP
 
@@ -539,7 +539,7 @@ def check_row_drag_slack():
     pane sits at its minimum width the handles freeze — which is what happened
     once the row overflowed the viewport.
     """
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = _app()
     with tempfile.TemporaryDirectory() as d:
         n = 3
@@ -557,9 +557,9 @@ def check_row_drag_slack():
 
 def check_tab_reveals_pane():
     """Picking a tab scrolls that module's pane into view."""
-    from PyQt6.QtWidgets import QApplication
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtTest import QTest
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
     app = _app()
     with tempfile.TemporaryDirectory() as d:
         win = _row_window(app, d, 5)
@@ -637,7 +637,7 @@ def check_custom_runtime():
 def check_custom_start_routing():
     """A custom module that serves a URL takes the web path, not the window
     path; one with no run command refuses instead of launching the shell."""
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = _app()   # noqa: F841
     with tempfile.TemporaryDirectory() as d:
         cfg = main.ModuleConfig(name="x", project_dir=d, entry="",
@@ -706,7 +706,7 @@ def check_push_recent():
 
 def check_tab_highlight():
     """The clicked tab gets the same outline colors as its pane."""
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = _app()   # noqa: F841
     bar = main.LangTabBar()
     bar.addTab("one")
@@ -728,9 +728,9 @@ def check_compact_header():
     The header needs ~640px but a tiled pane can be dragged to PANE_MIN_W
     (160), where the buttons survived as unreadable ~13px slivers.
     """
-    from PyQt6.QtWidgets import QApplication
-    from PyQt6.QtTest import QTest
-    from PyQt6.QtCore import QPoint, Qt
+    from PySide6.QtWidgets import QApplication
+    from PySide6.QtTest import QTest
+    from PySide6.QtCore import QPoint, Qt
     app = _app()
     with tempfile.TemporaryDirectory() as d:
         win = _row_window(app, d, 2)
@@ -780,7 +780,7 @@ def check_compact_header():
 
 def check_compact_button_intent():
     """Collapsing must not resurrect a button that was deliberately hidden."""
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = _app()   # noqa: F841
     cfg = main.ModuleConfig(name="m", project_dir="/tmp", entry="main.py")
     tab = main.ModuleTab(cfg)
@@ -806,7 +806,7 @@ def check_header_never_clips():
     buttons at their full width, glyph buttons wide enough for the glyph,
     nothing past the right edge. A fixed 430px fold point cut labels off
     with Windows 11's 81px-minimum buttons at 125%."""
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
     app = _app()
     host = QWidget()
     host.resize(1600, 500)
@@ -848,7 +848,7 @@ def check_header_never_clips():
 
 def check_module_log_file():
     """Pane output is teed to disk — the widget's 5000 blocks die with the tab."""
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = _app()   # noqa: F841
     with tempfile.TemporaryDirectory() as d:
         keep = (main.LOG_DIR, main.ENVS_DIR)
@@ -874,9 +874,9 @@ def check_module_log_file():
 
 def check_env_var_editor():
     """extra_env has always been honored at launch; this is the way in."""
-    from PyQt6.QtWidgets import (QApplication, QDialogButtonBox,
-                                 QPlainTextEdit)
-    from PyQt6.QtCore import QTimer
+    from PySide6.QtWidgets import (QApplication, QDialogButtonBox,
+                                   QPlainTextEdit)
+    from PySide6.QtCore import QTimer
     app = _app()
     with tempfile.TemporaryDirectory() as d:
         win = _row_window(app, d, 1)
@@ -894,7 +894,7 @@ def check_env_var_editor():
         # The "JUNK was ignored" warning opens only after the editor closes,
         # so poll for it: a single fixed-delay timer could fire before the
         # warning exists and leave that modal waiting forever (a hung run).
-        from PyQt6.QtWidgets import QMessageBox
+        from PySide6.QtWidgets import QMessageBox
         poll = QTimer()
         poll.setInterval(20)
         deadline = time.monotonic() + 5
@@ -924,7 +924,7 @@ def check_env_var_editor():
 
 def check_shortcuts():
     """Keys act on the picked tab, wherever the focus happens to be."""
-    from PyQt6.QtWidgets import QApplication, QMenu
+    from PySide6.QtWidgets import QApplication, QMenu
     app = _app()
     with tempfile.TemporaryDirectory() as d:
         win = _row_window(app, d, 3)
@@ -960,7 +960,7 @@ def check_shortcuts():
 
 def check_geometry_roundtrip():
     """Reopen where we closed — but never off every screen."""
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = _app()
     with tempfile.TemporaryDirectory() as d:
         win = _row_window(app, d, 0)
@@ -1057,7 +1057,7 @@ def check_children_walk():
 
 def check_sampler():
     """CPU and RSS per owner, summed over each owner's whole process tree."""
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     _app()
     busy = subprocess.Popen(
         [sys.executable, "-c",
@@ -1107,7 +1107,7 @@ def check_sampler():
 
 
 def check_meter_widget():
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     _app()
     m = main.ResourceMeter(main.border_colors("python"))
     m.resize(150, 20)
@@ -1127,7 +1127,7 @@ def check_meter_widget():
 def check_log_modes():
     """The log shows in the pane, docked beside the module, or its own window —
     and survives every move, since it is one widget being reparented."""
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = _app()
     with tempfile.TemporaryDirectory() as d:
         win = _row_window(app, d, 1)
@@ -1191,7 +1191,7 @@ def check_log_modes():
 
 def check_meter_toggles():
     """Master switch, per-module switch, and the narrow-pane tier."""
-    from PyQt6.QtWidgets import QApplication
+    from PySide6.QtWidgets import QApplication
     app = _app()
     with tempfile.TemporaryDirectory() as d:
         win = _row_window(app, d, 1)
@@ -1386,7 +1386,7 @@ def check_late_window_embeds():
     """A window that turns up after 40 s (dotnet run compiling first) is still
     embedded — from the module's own processes only, never a stranger's."""
     _app()
-    from PyQt6.QtCore import QProcess
+    from PySide6.QtCore import QProcess
 
     class Proc:
         def state(self):
@@ -1429,7 +1429,7 @@ def check_fallback_skips_neighbours():
     module's processes own: java-table-win's table came up in csharp-winrt's
     tab (still compiling past its 10 s head start), the C# window in Java's."""
     _app()
-    from PyQt6.QtCore import QProcess
+    from PySide6.QtCore import QProcess
 
     class Proc:
         def __init__(self, pid):
@@ -1597,7 +1597,7 @@ def check_embed_refused():
         return
     import ctypes
     import winplat
-    from PyQt6.QtWidgets import QWidget
+    from PySide6.QtWidgets import QWidget
     _app()
     wid = _win32_window(winplat.WS_POPUP)
     before = winplat._GetLong(wid, winplat.GWL_STYLE)
@@ -2024,7 +2024,7 @@ def check_wsl_turns():
 
 def check_crash_guard():
     """An exception in a Qt callback is logged to a file and reported; the
-    launcher lives on. (PyQt6's default aborts — this check would die.)"""
+    launcher lives on. (PyQt6's default aborted — this check would have died.)"""
     app = _app()
     old_hook = sys.excepthook
     seen = []
@@ -2120,7 +2120,7 @@ def check_private_wineprefix_boot():
 def check_os_badge():
     """OS-bound tabs carry a Windows/Linux mark beside the name; it follows
     Runs on, and modules that run anywhere get none."""
-    from PyQt6.QtWidgets import QStyle, QTabBar
+    from PySide6.QtWidgets import QStyle, QTabBar
     app = _app()
     assert main.os_badge("") is None
     for need in ("windows", "linux"):

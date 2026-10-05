@@ -48,8 +48,12 @@ Per-tab **Rebuild Env** wipes the runtime's environment (venv for Python,
 Qt requires; needs Python 3 — if missing:
 `winget install -e --id Python.Python.3.13`).
 
-First run creates `.venv/` and installs PyQt6 plus python-xlib (Linux) or
+First run creates `.venv/` and installs PySide6 plus python-xlib (Linux) or
 psutil (Windows). No admin rights, no prompts — everything is user-level pip.
+
+**Linux package** — `bash installer/build_linux.sh` builds a tarball that
+carries its own Python and Qt: extract it and double-click *Install Unified
+Base* (installs to `~/.local`, no root). See `installer/README.md`.
 
 Check what works on a machine: `./run.sh --selftest` or `run.bat --selftest`.
 It launches a small window, finds it, embeds it, stops it, and probes

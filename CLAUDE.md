@@ -1,6 +1,6 @@
 # Unified Base
 
-A PyQt6 launcher (BomsAI Software) that runs other programs, in any language,
+A PySide6 launcher (BomsAI Software) that runs other programs, in any language,
 and embeds their windows as tabs and side-by-side panes. One code base for
 Linux and Windows, and each OS also runs the other's apps: Windows apps
 through **Wine** on Linux, Linux apps through **WSL** on Windows.
@@ -32,11 +32,20 @@ Makefiles rebuild them only when missing (`make -B` after editing the
 source): a checkout often leaves main.c newer, and a rebuild is never
 byte-identical, so it dirtied the tree.
 
-**Installers come later (Linux and Windows).** Keep that possible: no
-personal paths in defaults, and nothing new that must write next to the code.
-Today `apps/` (blank tabs) and the demos' build output live under the install
-folder, which will be read-only in Program Files or `/opt` — both need a
-user-writable home before an installer ships.
+**Qt is PySide6, never PyQt6** (moved 2026-10-05). PyQt6 is GPL, so a
+download that bundles it is GPL too; PySide6 is LGPL-3.0, fine as long as Qt
+ships as separate, unmodified shared libraries. Import only from `PySide6.*`:
+two bindings in one process are two copies of Qt. The build refuses a runtime
+with PyQt6 in it. Differences that bit: `pyqtSignal` is `Signal`,
+`QT_VERSION_STR` is `qVersion()`, and PySide6 has no `QWIDGETSIZE_MAX`
+(main.py defines it).
+
+**Installers: Linux done (`installer/`), Windows next.** Both install per user
+(`~/.local/share/UnifiedBase`, and on Windows `%LOCALAPPDATA%\Programs`, no
+UAC), so the install folder is writable: the demos still build inside it and
+rebuild after an upgrade. Nothing the user makes may live there — blank tabs
+moved to `~/.unified_base/apps` for that reason. No personal paths in
+defaults. See `installer/README.md`.
 
 **User preferences.** The user is on a fixed plan: never warn about token cost
 or scale work down to save it. Admin/root installs (apt, UAC prompts) are the
@@ -72,8 +81,9 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Linux: 80 pass (2026-10-04
-  night; +2 since). Real Windows: 72 pass, 10 skipped (2026-10-05).
+- `python test_core.py` (inside `.venv`). Linux: 82 pass (2026-10-05, on
+  PySide6). Real Windows: 72 pass, 10 skipped (2026-10-05, still PyQt6 —
+  re-run after `run.bat` installs PySide6).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
@@ -178,7 +188,8 @@ x11-native embed; docker, docker-multistage print); the rest now say which
   and orphaned the first (`start()` refuses now); Stop during setup was
   greyed out (it cancels now); Ctrl+Shift+R rebuilt a running module's
   deps, and deleted `build/dist/out` unasked (it confirms now).
-- An exception in any Qt callback aborted the launcher (PyQt6's default):
+- An exception in any Qt callback aborted the launcher (PyQt6's default;
+  PySide6 prints and carries on, just as invisibly on Windows):
   `install_crash_guard` logs it to `.unified_base/unified_base.log` (the
   only trace on Windows, whose console is hidden) and keeps running.
 - Docker modules never search for a window ("running (output in log)").
@@ -322,8 +333,9 @@ process list shows whatever runs, claude.exe included).
 - Testing: PrintWindow on an embedded child needs the *parent's* thread
   pumping — a harness that blocks on its capture subprocess deadlocks.
 
-- Qt 6.11 (current PyQt6) needs Windows 10 1809+ (system ICU); Wine lacks it,
-  so Wine tests pin `PyQt6==6.9.1`.
+- Qt 6.11 needs Windows 10 1809+ (system ICU); Wine lacks it, so Wine tests
+  pinned `PyQt6==6.9.1`. Since the PySide6 move the equivalent would be
+  `PySide6-Essentials==6.9.*` — not yet tried under Wine.
 - Never call `super().nativeEvent()` from an override — it spun forever;
   return `(False, 0)`, which is all QWidget's does.
 - Win32: set `WS_CHILD` / clear `WS_POPUP` *before* `SetParent`; ctypes needs

@@ -23,9 +23,9 @@ import sys
 from ctypes import wintypes
 
 import psutil
-from PyQt6.QtCore import QEvent, QProcess, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QPlatformSurfaceEvent
-from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QProcess, Qt, QTimer, Signal
+from PySide6.QtGui import QPlatformSurfaceEvent
+from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 logger = logging.getLogger("unified_base")
 
@@ -625,7 +625,7 @@ class Win32EmbedHost(QWidget):
     happens; the child is parked on the desktop then, and re-attached on
     WinIdChange.
     """
-    clicked = pyqtSignal()
+    clicked = Signal()
 
     def __init__(self, child_wid: int, parent=None, log=None):
         super().__init__(parent)
@@ -932,7 +932,7 @@ class ConsoleTerminal(QWidget):
     console window is then hosted with Win32EmbedHost like any module, so
     vim, ssh and interactive prompts all work.
     """
-    closed = pyqtSignal()       # the console went away (`exit`)
+    closed = Signal()       # the console went away (`exit`)
 
     def __init__(self, cwd: str, parent=None, log=None):
         super().__init__(parent)

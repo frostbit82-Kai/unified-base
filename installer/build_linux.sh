@@ -7,7 +7,7 @@
 # Output: installer/dist/UnifiedBase-<version>-linux-x86_64.tar.gz
 #
 # Not PyInstaller, on purpose: the package carries a standalone CPython
-# (python-build-standalone, via uv) with PyQt6 pip-installed into it, and runs
+# (python-build-standalone, via uv) with PySide6 pip-installed into it, and runs
 # main.py from source. Two reasons, both measured — see installer/README.md:
 # the app runs its own helpers through sys.executable, which a frozen build
 # turns into the app itself; and a frozen build inherits this machine's glibc.
@@ -18,8 +18,8 @@ HERE="$REPO/installer"
 VERSION="$(cat "$REPO/VERSION")"
 NAME="UnifiedBase-${VERSION}-linux-x86_64"
 PYVER="${PYVER:-3.14}"
-# Linux Mint 21 / Ubuntu 22.04. PyQt6's wheels set the real floor (2.34 for
-# 6.11); this catches an upgrade that quietly raises it.
+# Linux Mint 21 / Ubuntu 22.04. PySide6's wheels set the real floor (2.34 for
+# 6.10+); this catches an upgrade that quietly raises it.
 GLIBC_MAX="${GLIBC_MAX:-2.35}"
 BUILD="$HERE/build"
 OUT="$HERE/dist"
@@ -49,22 +49,26 @@ echo "==> [2/6] Dependencies"
 "${PYI[@]}" -m pip install -q --no-cache-dir --break-system-packages \
     --no-warn-script-location -r "$REPO/requirements.txt"
 "${PYI[@]}" -m pip freeze > "$BUILD/freeze.txt"
+# PyQt6 is GPL. One that slipped in would also be a second Qt in the process.
+! grep -qi '^pyqt' "$BUILD/freeze.txt" || { echo "PyQt6 got into the runtime" >&2; exit 1; }
 
 echo "==> [3/6] Trimming Qt"
-# PyQt6's wheel is all of Qt, 260 MB. The app uses Widgets. Delete the big
-# unused modules, then anything left that links one of them, until nothing
-# changes; the ldd pass is the safety net, so this list can be blunt.
+# PySide6-Essentials is 233 MB: Qt Quick, QML, Designer and the Qt tools. The
+# app uses Widgets. Delete the big unused modules, then anything left that
+# links one of them, until nothing changes; the ldd pass is the safety net, so
+# this list can be blunt. Every library stays a separate, unmodified .so —
+# that is what the LGPL asks of a bundle.
 # QtTest stays (400 KB): test_core.py, run below on this runtime, needs it.
-QT="$(echo "$STAGE"/runtime/lib/python3*/site-packages/PyQt6)"
-rm -rf "$QT/Qt6/qml" "$QT/Qt6/translations" "$QT/bindings" "$QT/uic" "$QT/lupdate"
-for m in Bluetooth Concurrent Designer Help Labs Multimedia Nfc Pdf Positioning \
-         PrintSupport Qml Quick RemoteObjects Sensors SerialPort ShaderTools \
-         SpatialAudio Sql StateMachine TextToSpeech WebChannel WebSockets \
-         Network Xml FFmpegStub EglFS; do
-    rm -f "$QT"/Qt6/lib/libQt6"$m"*.so* "$QT"/Qt"$m"*.abi3.so
+QT="$(echo "$STAGE"/runtime/lib/python3*/site-packages/PySide6)"
+rm -rf "$QT"/Qt/{qml,translations,libexec,metatypes} \
+       "$QT"/{assistant,designer,linguist,lrelease,lupdate,qmlformat,qmllint,qmlls,svgtoqml} \
+       "$QT"/{doc,include,glue,typesystems,scripts}
+find "$QT" -name '*.pyi' -delete
+for m in Concurrent Designer Help Labs Lottie PrintSupport Qml Quick Sql UiTools \
+         Network Xml EglFS EglFs WaylandCompositor WaylandEgl; do
+    rm -f "$QT"/Qt/lib/libQt6"$m"*.so* "$QT"/Qt"$m"*.abi3.so
 done
-rm -f "$QT"/Qt6/lib/lib{avcodec,avformat,avutil,swresample,swscale}.so*
-rm -f "$STAGE"/runtime/bin/pyuic6 "$STAGE"/runtime/bin/pylupdate6
+rm -f "$STAGE"/runtime/bin/pyside6-* "$STAGE"/runtime/bin/shiboken6*
 while :; do
     gone=0
     while IFS= read -r -d '' f; do
@@ -76,10 +80,10 @@ while :; do
     done < <(find "$QT" -name '*.so*' -type f -print0)
     [ "$gone" = 0 ] && break
 done
-find "$QT/Qt6/plugins" -type d -empty -delete
+find "$QT/Qt/plugins" -type d -empty -delete
 for need in QtCore.abi3.so QtGui.abi3.so QtWidgets.abi3.so QtSvg.abi3.so \
-            Qt6/plugins/platforms/libqxcb.so Qt6/plugins/imageformats/libqsvg.so \
-            Qt6/plugins/iconengines/libqsvgicon.so; do
+            Qt/plugins/platforms/libqxcb.so Qt/plugins/imageformats/libqsvg.so \
+            Qt/plugins/iconengines/libqsvgicon.so; do
     [ -e "$QT/$need" ] || { echo "Trimming removed $need" >&2; exit 1; }
 done
 
@@ -100,6 +104,7 @@ chmod +x "$STAGE/install.sh" "$STAGE/uninstall.sh" "$STAGE/unified-base" \
          "$STAGE/Install Unified Base.desktop" "$STAGE/Uninstall Unified Base.desktop"
 printf '%s\n' "$VERSION" > "$STAGE/VERSION"
 cp "$BUILD/freeze.txt" "$STAGE/app/PACKAGES"
+cp -r "$HERE/licenses" "$STAGE/app/licenses"
 
 echo "==> [5/6] Checks"
 # objdump fails on the scripts and .exe files in the list; only its output counts.

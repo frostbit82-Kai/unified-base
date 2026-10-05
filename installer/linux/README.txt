@@ -30,6 +30,7 @@ script sitting next to it:
 Installs to ~/.local, no root needed. It adds an applications-menu entry
 (under Development) and a `unified-base` command, then checks that it starts.
 It brings its own Python and Qt, so nothing on your system changes.
+Third-party licences: ~/.local/share/UnifiedBase/app/licenses
 
 To install somewhere else:   PREFIX=/opt ./install.sh    (may need sudo)
 To upgrade:                  install the new version the same way

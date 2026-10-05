@@ -127,21 +127,22 @@ def force_x11_env(env) -> None:
 # uv (if present) creates venvs and installs deps far faster than venv+pip.
 USE_UV = bool(shutil.which("uv"))
 
-from PyQt6.QtCore import (QByteArray, QEvent, QObject, QPointF, QProcess,
-                          QProcessEnvironment, QRect, QRectF, QSize,
-                          QSocketNotifier, Qt, QTimer, pyqtSignal)
-from PyQt6.QtGui import (QAction, QActionGroup, QBrush, QColor, QFont,
-                         QGuiApplication, QIcon, QLinearGradient, QPainter,
-                         QPainterPath, QPen, QPixmap, QWindow)
-from PyQt6.QtWidgets import (QApplication, QCheckBox, QDialog,
-                             QDialogButtonBox, QFileDialog,
-                             QHBoxLayout, QInputDialog, QLabel, QLineEdit,
-                             QListWidget, QListWidgetItem, QMainWindow, QMenu,
-                             QMessageBox, QPlainTextEdit, QPushButton,
-                             QScrollArea, QSizePolicy, QSplitter,
-                             QStackedWidget, QStyle, QTabBar,
-                             QToolButton, QVBoxLayout, QWIDGETSIZE_MAX,
-                             QWidget)
+from PySide6.QtCore import (QByteArray, QEvent, QObject, QPointF, QProcess,
+                            QProcessEnvironment, QRect, QRectF, QSize,
+                            QSocketNotifier, Qt, QTimer, Signal)
+from PySide6.QtGui import (QAction, QActionGroup, QBrush, QColor, QFont,
+                           QGuiApplication, QIcon, QLinearGradient, QPainter,
+                           QPainterPath, QPen, QPixmap, QWindow)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog,
+                               QDialogButtonBox, QFileDialog,
+                               QHBoxLayout, QInputDialog, QLabel, QLineEdit,
+                               QListWidget, QListWidgetItem, QMainWindow, QMenu,
+                               QMessageBox, QPlainTextEdit, QPushButton,
+                               QScrollArea, QSizePolicy, QSplitter,
+                               QStackedWidget, QStyle, QTabBar,
+                               QToolButton, QVBoxLayout, QWidget)
+
+QWIDGETSIZE_MAX = (1 << 24) - 1   # Qt's own value; PySide6 does not export it
 
 BASE_DIR = Path(__file__).resolve().parent   # repo root (holds demo_module/)
 DEMO_DIR = BASE_DIR / "demo_module"           # bundled showcase apps, grouped
@@ -2126,7 +2127,7 @@ class ResourceSampler(QObject):
     would walk /proc once per module. The window owns the single timer and the
     meters read the results out of `usage`.
     """
-    sampled = pyqtSignal()
+    sampled = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -2326,8 +2327,8 @@ class LogWindow(QWidget):
     Wears its module's border gradient, the same two tones as that module's tab
     chip and pane outline, so several open at once stay tellable apart.
     """
-    redock = pyqtSignal()
-    closed = pyqtSignal()
+    redock = Signal()
+    closed = Signal()
 
     def __init__(self, name: str, colors, parent=None):
         super().__init__(parent)
@@ -2791,7 +2792,7 @@ def new_windows_since(baseline: set[int], own_pid: int,
 # Gracefully falls back to panel mode on Wayland or when reparenting fails.
 # ---------------------------------------------------------------------------
 class XEmbedHost(QWidget):
-    clicked = pyqtSignal()      # a button press landed inside the child
+    clicked = Signal()      # a button press landed inside the child
 
     def __init__(self, child_wid: int, parent=None, log=None):
         super().__init__(parent)
@@ -3048,7 +3049,7 @@ class TerminalHost(QWidget):
 
     X11-only (python-xlib + xterm -into). On Windows, TerminalHost is
     winplat.ConsoleTerminal: an embedded conhost console, same idea."""
-    closed = pyqtSignal()       # the shell ended (`exit`), not shutdown()
+    closed = Signal()       # the shell ended (`exit`), not shutdown()
 
     def __init__(self, cwd: str, parent=None, log=None):
         super().__init__(parent)
@@ -3524,9 +3525,9 @@ def visible_pane_count(independent: list[bool], current: int) -> int:
 
 
 class ModuleTab(QWidget):
-    state_changed = pyqtSignal()
-    config_changed = pyqtSignal()   # cfg edited in-tab; window persists it
-    pane_clicked = pyqtSignal()     # user clicked inside the embedded module
+    state_changed = Signal()
+    config_changed = Signal()   # cfg edited in-tab; window persists it
+    pane_clicked = Signal()     # user clicked inside the embedded module
 
     def __init__(self, cfg: ModuleConfig, parent=None):
         super().__init__(parent)
@@ -6835,7 +6836,7 @@ def selftest() -> int:
     written: it launches a small Tk window, finds it by pid, embeds it, and
     probes WSL / Wine / winget / the browser. Paste the output back.
     """
-    from PyQt6.QtCore import QT_VERSION_STR
+    from PySide6.QtCore import qVersion
     app = QApplication.instance() or QApplication(sys.argv[:1])
     fails = 0
 
@@ -6854,7 +6855,7 @@ def selftest() -> int:
             return -1, str(e)
 
     print(f"Unified Base self-test — {platform.system()} {platform.release()}, "
-          f"Python {platform.python_version()}, Qt {QT_VERSION_STR}, "
+          f"Python {platform.python_version()}, Qt {qVersion()}, "
           f"platform plugin {QGuiApplication.platformName()}")
     row("embedding available", EMBEDDING_OK)
     row("window lookup", None, embed_diagnostics())
@@ -6943,10 +6944,11 @@ def selftest() -> int:
 
 
 def install_crash_guard(log_file: Path, report=None) -> logging.Handler | None:
-    """An exception in a Qt callback must not take the launcher down. PyQt6's
-    default aborts the process: every embedded module loses its window while
-    its processes run on untracked, and on Windows (console hidden) the
-    launcher just vanished. Log it — to `log_file` too, since stderr is
+    """An exception in a Qt callback must not take the launcher down. Under
+    PyQt6 (before the PySide6 move) it aborted the process: every embedded
+    module lost its window while its processes ran on untracked, and on
+    Windows (console hidden) the launcher just vanished. PySide6 prints and
+    carries on, which on Windows is just as invisible. Log it — to `log_file` too, since stderr is
     invisible there — tell `report`, and carry on. Returns the file handler."""
     handler = None
     try:
