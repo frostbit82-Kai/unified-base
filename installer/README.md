@@ -10,6 +10,23 @@ Release packaging for Unified Base.
       licenses/          third-party licence texts, shipped in app/licenses
       build/  dist/      output, gitignored
 
+## Releases
+
+`.github/workflows/release.yml` builds both installers on GitHub's runners
+(free for a public repo) with the two scripts below, `test_core.py` gating
+each. Bump `VERSION`, commit, then
+
+    git tag v0.9.1 && git push origin v0.9.1
+
+and it makes a **draft** release with both files, renamed without the
+version (`UnifiedBase-windows-x64-setup.exe`, `UnifiedBase-linux-x86_64.tar.gz`,
+so `/releases/latest/download/<name>` — what the README and the website link
+— always reaches the newest) and `SHA256SUMS.txt`. Download them, try them on
+a real machine, then Publish. The tag must match `VERSION` or it stops.
+*Run workflow* on the Actions tab builds them as artifacts without a release.
+The release text is `.github/release-notes.md`; edit the draft for what
+changed.
+
 ## Linux
 
     bash installer/build_linux.sh

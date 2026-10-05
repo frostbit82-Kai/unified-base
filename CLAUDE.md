@@ -19,7 +19,7 @@ launch, setup step and command-bar line goes through `ModuleTab._wrap()`,
 which applies the module's bridge.
 
 **One clone per machine**, and they meet on GitHub (`frostbit82-Kai/unified-base`,
-private): `~/Projects/Unified Base` on Linux, `D:\Projects\Unified Base` (the
+**public** since 2026-10-05, MIT — everything committed is published): `~/Projects/Unified Base` on Linux, `D:\Projects\Unified Base` (the
 "Storage" SD card, NTFS) on Windows. Commit, push, pull. A copy made any other
 way is how work gets stranded.
 
@@ -47,7 +47,9 @@ when `self` is deleted (PyQt6's was): pass the object as context,
 UAC), so the install folder is writable: the demos still build inside it and
 rebuild after an upgrade. Nothing the user makes may live there — blank tabs
 moved to `~/.unified_base/apps` for that reason. No personal paths in
-defaults. See `installer/README.md`.
+defaults. See `installer/README.md`. **Releases are built by CI**
+(`.github/workflows/release.yml`): a `v<VERSION>` tag makes a draft release
+with both installers; the user tests the drafts and presses Publish.
 
 **User preferences.** The user is on a fixed plan: never warn about token cost
 or scale work down to save it. Admin/root installs (apt, UAC prompts) are the

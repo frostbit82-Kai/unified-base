@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions, ideas and feedback
+    url: https://github.com/frostbit82-Kai/unified-base/discussions
+    about: Ask how to do something, suggest a feature, or show what you run in it.

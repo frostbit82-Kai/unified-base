@@ -10,6 +10,28 @@ Runs on **Linux and Windows**, and each can host the other's apps: Windows
 programs run on Linux through **Wine**, Linux programs run on Windows through
 **WSL**. See [Cross-OS modules](#cross-os-modules).
 
+![Unified Base on Linux running six modules in a grid: three Linux apps beside a paint program, a WinForms app and a Python tool running through Wine](docs/screenshot.webp)
+
+## Download
+
+Free and open source ([MIT](LICENSE)). Each download carries its own Python
+and Qt, so there is nothing to install first.
+
+- **Windows 10 1809+ / 11** — [UnifiedBase-windows-x64-setup.exe](https://github.com/frostbit82-Kai/unified-base/releases/latest/download/UnifiedBase-windows-x64-setup.exe).
+  Installs for your user only, no admin. It is not code-signed yet, so
+  SmartScreen may say *Windows protected your PC*: **More info ▸ Run anyway**.
+- **Linux** (Mint 21+, Ubuntu 22.04+, Debian 12+) — [UnifiedBase-linux-x86_64.tar.gz](https://github.com/frostbit82-Kai/unified-base/releases/latest/download/UnifiedBase-linux-x86_64.tar.gz).
+  Extract it and double-click **Install Unified Base**; installs to
+  `~/.local`, no root.
+
+Then **File ▸ Load Demo Modules** to see it work. All versions and SHA-256
+sums: [Releases](https://github.com/frostbit82-Kai/unified-base/releases).
+Setup guide: [bomsaisoftware.com/software/unified-base-guide](https://bomsaisoftware.com/software/unified-base-guide).
+Questions and ideas go in [Discussions](https://github.com/frostbit82-Kai/unified-base/discussions);
+bugs in [Issues](https://github.com/frostbit82-Kai/unified-base/issues), with
+the output of the self-test (`unified-base --selftest`, or *Unified Base
+Self-Test* in the Start menu).
+
 ## Supported runtimes
 
 When you add a folder, the base detects its runtime (asking if more than one
@@ -36,7 +58,7 @@ Core logic has a self-check: `python3 test_core.py` (run inside `.venv`).
 Per-tab **Rebuild Env** wipes the runtime's environment (venv for Python,
 `node_modules` / `target` / `build` / etc. for the rest) and re-runs setup.
 
-## Run
+## Run from source
 
 **Linux**
 
@@ -225,3 +247,9 @@ them from **File ▸ Load Demo Modules**. Besides one demo per runtime there are
 deliberately single-OS ones to exercise the bridges: `Windows/win32-native`
 (plain Win32 C), `Windows/winforms-dotnet` (.NET WinForms) and
 `Linux/x11-native` (raw Xlib, statically linked so any WSL distro runs it).
+
+## License
+
+MIT — see [LICENSE](LICENSE). The installers also ship Qt and PySide6
+(LGPL-3.0), python-xlib (LGPL-2.1+) and CPython (PSF); their licences are in
+`installer/licenses/`.

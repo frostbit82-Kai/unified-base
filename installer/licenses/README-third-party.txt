@@ -1,6 +1,8 @@
 Third-party components shipped with Unified Base
 ================================================
 
+Unified Base itself is MIT-licensed: see LICENSE in the app folder.
+
 Qt 6 and PySide6 (Qt for Python) — LGPL-3.0
     Qt-PySide6-LGPL-3.0.txt, and Qt-PySide6-GPL-3.0.txt, which the LGPL
     refers to.

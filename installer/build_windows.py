@@ -213,7 +213,8 @@ def main():
     app = STAGE / "app"
     files = subprocess.run(
         ["git", "-C", str(REPO), "ls-files", "-z", "--", "main.py", "winplat.py",
-         "setup-wsl.ps1", "unified-base.svg", "VERSION", "README.md", "demo_module"],
+         "setup-wsl.ps1", "unified-base.svg", "VERSION", "LICENSE", "README.md",
+         "demo_module"],
         capture_output=True, check=True).stdout.decode().split("\0")
     for f in filter(None, files):
         (app / f).parent.mkdir(parents=True, exist_ok=True)

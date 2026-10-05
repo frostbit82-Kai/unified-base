@@ -1,0 +1,24 @@
+name: Bug report
+description: Something in Unified Base does not work
+body:
+  - type: textarea
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead. For a module, say what language it is in and which OS it was written for.
+    validations: { required: true }
+  - type: input
+    attributes:
+      label: System
+      description: Your OS and version, and how you run Unified Base (installer version, or from source at which commit).
+      placeholder: Windows 11 24H2, setup 0.9.0
+    validations: { required: true }
+  - type: textarea
+    attributes:
+      label: Self-test output
+      description: "Linux: `unified-base --selftest` (from source: `./run.sh --selftest`). Windows: Start menu > Unified Base Self-Test (from source: `run.bat --selftest`). It also tells you what Wine, WSL and the rest need."
+      render: text
+  - type: textarea
+    attributes:
+      label: Log
+      description: "If the app itself misbehaved: `~/.unified_base/unified_base.log` (Windows: `%USERPROFILE%\\.unified_base\\unified_base.log`). For a module, its Logs panel (also kept in `~/.unified_base/logs/`)."
+      render: text

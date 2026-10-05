@@ -91,7 +91,7 @@ echo "==> [4/6] The app"
 mkdir -p "$STAGE/app"
 # Tracked files only: the demos' node_modules, target, .venv and the rest stay
 # behind, and each rebuilds for the OS it runs on.
-(cd "$REPO" && git ls-files -z -- main.py winplat.py unified-base.svg VERSION \
+(cd "$REPO" && git ls-files -z -- main.py winplat.py unified-base.svg VERSION LICENSE \
     README.md demo_module | xargs -0 cp --parents -t "$STAGE/app")
 git -C "$REPO" describe --always --dirty > "$STAGE/app/BUILD"
 cp "$HERE/linux/install.sh" "$HERE/linux/uninstall.sh" "$HERE/linux/unified-base" \
