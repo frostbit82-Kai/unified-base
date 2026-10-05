@@ -72,8 +72,8 @@ user's to run — hand them the command; never type a password.
 - `run.bat --selftest` / `./run.sh --selftest`: finds, embeds and stops a Tk
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
-- `python test_core.py` (inside `.venv`). Linux: 78 pass (+1 since:
-  `check_wsl_turns`). Real Windows: 69 pass, 10 skipped (2026-10-04 night).
+- `python test_core.py` (inside `.venv`). Linux: 80 pass (2026-10-04
+  night). Real Windows: 69 pass, 10 skipped (2026-10-04 night).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
@@ -151,9 +151,11 @@ The Windows demos on Linux: the cross-platform twins run natively
 node-desktop-win, web-worker-win, docker-multistage-win) as do the ones that
 degrade gracefully off Windows (web-edge, node-windows, php-com). Compiled
 Windows-only demos run through Wine and embed: c-paint, c-sysmon,
-win32-native, winforms-dotnet, csharp-winrt, and rust-synth (cross-compiled
-for `x86_64-pc-windows-gnu`, the C# pattern). csharp-binding-win: WPF
-FailFasts in font fallback under Wine (Wine limit). The interpreted
+win32-native, winforms-dotnet, and rust-synth (cross-compiled for
+`x86_64-pc-windows-gnu`, the C# pattern). csharp-binding-win and
+csharp-winrt are WPF, and WPF FailFasts in font fallback under Wine (Wine
+limit) — csharp-winrt was listed as running here; re-checked the same night,
+it never did. The interpreted
 Windows-only ones (python-winapi, java-ffm, ruby-com, ruby-lsystem-win) and
 docker-windows are now *detected* as Windows (they get the four-pane mark
 on both OSes). The first three languages run on their own Windows build
@@ -191,6 +193,29 @@ x11-native embed; docker, docker-multistage print); the rest now say which
   winget (nor does Maven) — those now name their download page
   (`WINDOWS_DOWNLOADS`); `make` and `cmake` got winget IDs. Every winget ID
   in `TOOLCHAIN_PKGS` was checked with `winget show` on 2026-10-04.
+
+**Linux screenshot session, 2026-10-04 night** (site shots, nested Xvfb, a
+scratch HOME). Fixed, shared code — not yet re-run on Windows:
+- View ▸ Tab colors ▸ Full color tabs centred each label across the whole
+  tab, so its end sat under the close button ("wel", "rub"). The label now
+  goes between the tab's buttons (OS badge, close) and elides.
+- The command bar ran in the system environment: `pip install rich` reached
+  the system pip (Ubuntu refuses it: externally managed), never the module's
+  venv. Native Python modules now get the venv first on PATH plus
+  `VIRTUAL_ENV` (`_venv_env`), and uv makes venvs with `--seed` — uv's venvs
+  had no pip at all. The embedded terminal still opens without the venv.
+- csharp-winrt built `Windows.Media.Playback.MediaPlayer` in its window's
+  constructor; Wine has no such class (CLASS_E_CLASSNOTAVAILABLE), so the
+  app died before showing. Each tab is now built through `InPlace`, which
+  shows the error in that tab. (It still stops at WPF's font FailFast.)
+Found, not fixed:
+- java-ffm under Wine draws every glyph as a box: the prefix has no Arial /
+  Times New Roman / Courier New, and Java's Windows fontconfig maps its
+  logical fonts to those, falling through to Wingdings/Symbol. WPF's
+  FailFast is probably the same missing fonts. Likely fix: metric-compatible
+  fonts (Liberation) registered in the prefix under the Windows names.
+- ruby-com's System report and python-winapi's System tab print the
+  machine's name and user — keep them out of public screenshots.
 
 ## Traps (each cost real time)
 

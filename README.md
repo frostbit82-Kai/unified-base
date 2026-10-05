@@ -100,8 +100,12 @@ the launcher tags each launch so Stop and the meters still reach them.
 **WSL (Windows running Linux apps).** Enable it once (admin PowerShell:
 `wsl --install`). Setup steps, the launch and the command bar all run inside
 the default distro, through a login shell so its PATH is there; Python modules
-get their venv in the distro's own home. GUI apps appear through WSLg and are
-embedded from there. Toolchains need to exist *inside* the distro.
+get their venv in the distro's own home. Toolchains need to exist *inside* the
+distro. To embed Linux windows, run VcXsrv (`winget install marha.VcXsrv`,
+started as `vcxsrv.exe :0 -multiwindow -clipboard -wgl -listen tcp`) and set
+`networkingMode=mirrored` in `%USERPROFILE%\.wslconfig`. WSLg's own windows
+refuse to be embedded, so without VcXsrv a Linux app opens in its own window
+beside the launcher.
 
 ## Adding a module
 
