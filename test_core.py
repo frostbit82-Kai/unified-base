@@ -1423,6 +1423,77 @@ def check_late_window_embeds():
         tab.shutdown()
 
 
+def check_fallback_skips_neighbours():
+    """The "any new window" fallback never takes a window another running
+    module's processes own: java-table-win's table came up in csharp-winrt's
+    tab (still compiling past its 10 s head start), the C# window in Java's."""
+    _app()
+    from PyQt6.QtCore import QProcess
+
+    class Proc:
+        def __init__(self, pid):
+            self.pid = pid
+
+        def state(self):
+            return QProcess.ProcessState.Running
+
+        def processId(self):
+            return self.pid
+    me = main.ModuleTab(main.ModuleConfig(name="slow", project_dir="/p", entry=""))
+    other = main.ModuleTab(main.ModuleConfig(name="java", project_dir="/q", entry=""))
+    me.embed_proc, me._win_baseline = Proc(4242), set()
+    other.app_proc = Proc(999)
+    owner = {0x99: 999}                  # the neighbour's window, new since
+    keep = (main.windows_for_pids, main.new_windows_since, main.descendant_pids,
+            main.embed_diagnostics)
+    main.windows_for_pids = lambda pids: [w for w, p in owner.items() if p in pids]
+    main.new_windows_since = lambda *a, **k: list(owner)
+    main.descendant_pids = lambda pid: {pid}
+    main.embed_diagnostics = lambda: ""
+    embedded = []
+    me._embed = embedded.append
+    try:
+        me._embed_attempts = 45            # past the head start, still guessing
+        me._try_embed()
+        assert embedded == [], "took a neighbour's window"
+        owner[0x55] = 31337                # a window no module tracks
+        me._try_embed()
+        assert embedded == [0x55], embedded
+    finally:
+        (main.windows_for_pids, main.new_windows_since, main.descendant_pids,
+         main.embed_diagnostics) = keep
+        other.app_proc = None
+        for t in (me, other):
+            t.embed_timer.stop()
+            t.shutdown()
+
+
+def check_embed_vanished_window():
+    """A window that disappears mid-embed (Edge's short-lived first window:
+    SetParent says 87) sends the search on, instead of leaving the module in
+    its own window for good. A real refusal still ends it."""
+    _app()
+    tab = main.ModuleTab(main.ModuleConfig(name="e", project_dir="/p", entry=""))
+    keep = main.EmbedHost
+
+    def gone(*a, **k):
+        e = OSError("The parameter is incorrect.")
+        e.winerror = 87
+        raise e
+    main.EmbedHost = gone
+    try:
+        tab._embed(0x1234)
+        assert tab.embed_timer.isActive() and 0x1234 not in main._CLAIMED_WINDOWS
+        tab.embed_timer.stop()
+        tab._vanished = 5                  # it keeps vanishing: give up
+        tab._embed(0x1234)
+        assert not tab.embed_timer.isActive()
+    finally:
+        main.EmbedHost = keep
+        main._CLAIMED_WINDOWS.discard(0x1234)
+        tab.shutdown()
+
+
 def check_wsl_display_env():
     """With a Windows X server, a Linux module's launch draws there (its
     windows embed); without one it stays on WSLg, untouched."""
@@ -2293,7 +2364,8 @@ if __name__ == "__main__":
                check_wsl_ready, check_wsl_mount_args, check_wsl_setup_hint,
                check_npm_setup,
                check_php_setup,
-               check_late_window_embeds,
+               check_late_window_embeds, check_fallback_skips_neighbours,
+               check_embed_vanished_window,
                check_wsl_display_env,
                check_frame_restrip, check_embed_refused,
                check_kill_pid_exited,

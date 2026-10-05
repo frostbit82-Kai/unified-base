@@ -33,6 +33,7 @@ import sys
 import tempfile
 import time
 import traceback
+import weakref
 from dataclasses import dataclass, asdict, field
 from pathlib import Path
 from urllib.parse import unquote
@@ -2524,6 +2525,11 @@ _CLAIMED_WINDOWS: set[int] = set()
 # up, or stops. Setup still runs in parallel.
 _WSL_TURN: dict = {"searching": None, "queue": []}   # queue: (tab, launch)
 
+# Every module tab, for the "any new window" fallback to ask whose a window
+# is: java-table-win's table came up in csharp-winrt's tab (still compiling,
+# past its 10 s head start) and the C# window then in Java's.
+_LIVE_TABS: "weakref.WeakSet" = weakref.WeakSet()
+
 
 def windows_for_pids(pids: set[int]) -> list[int]:
     """Return viewable X11 window ids owned by any pid, largest first."""
@@ -3518,6 +3524,7 @@ class ModuleTab(QWidget):
 
     def __init__(self, cfg: ModuleConfig, parent=None):
         super().__init__(parent)
+        _LIVE_TABS.add(self)
         self.cfg = cfg
         self.setup_proc: QProcess | None = None
         self._cancel_setup = False                  # Stop pressed mid-setup
@@ -3534,6 +3541,7 @@ class ModuleTab(QWidget):
         self.embed_timer.timeout.connect(self._try_embed)
         self._embed_attempts = 0
         self._max_embed_attempts = 160   # ~40 s at 250 ms
+        self._vanished = 0               # windows that went away mid-embed
         self._reembed_rounds = 0
         self._max_reembed_rounds = 8
         self._win_baseline: set[int] = set()
@@ -4786,6 +4794,26 @@ class ModuleTab(QWidget):
         self._launch_process(str(py), [self.cfg.entry],
                              self.cfg.project_dir, extra)
 
+    def _tree_pids(self) -> set:
+        """Every process this module runs: its app's and browser's trees."""
+        out = set()
+        for p in (self.app_proc, self.browser_proc):
+            try:
+                if p is not None and p.processId() > 0 and \
+                        p.state() != QProcess.ProcessState.NotRunning:
+                    out |= descendant_pids(int(p.processId()))
+            except RuntimeError:              # its QProcess already deleted
+                pass
+        return out | self._wine_family()
+
+    def _others_windows(self) -> set:
+        """Windows the other running modules' own processes have open."""
+        pids = set()
+        for t in list(_LIVE_TABS):
+            if t is not self:
+                pids |= t._tree_pids()
+        return set(windows_for_pids(pids)) if pids else set()
+
     def _take_wsl_turn(self, launch) -> bool:
         """True when this WSL module may launch, and look for its window,
         now; otherwise `launch` waits its turn (see _WSL_TURN)."""
@@ -4880,6 +4908,7 @@ class ModuleTab(QWidget):
     def _begin_embed(self, embed: bool):
         if EMBEDDING_OK and embed:
             self._embed_attempts = 0
+            self._vanished = 0
             self._reembed_rounds = 0
             self.embed_timer.start()
             self._set_status("waiting for window")
@@ -5003,6 +5032,9 @@ class ModuleTab(QWidget):
                         owners=LINUX_WINDOW_OWNERS if wsl else None,
                         skip_owners=() if wsl else LINUX_WINDOW_OWNERS)
                     if w not in _CLAIMED_WINDOWS]
+            if wids:          # a guess, but never a neighbour's own window
+                theirs = self._others_windows()
+                wids = [w for w in wids if w not in theirs]
             if wids:
                 self._log("No pid match — embedding a new window that "
                           f"appeared after launch (0x{wids[0]:x}).")
@@ -5036,6 +5068,16 @@ class ModuleTab(QWidget):
             # Reparenting unavailable (Wayland, or a window Windows won't let
             # us adopt); try Qt's own container instead.
             logger.debug(f"Reparent failed: {e}")
+            if getattr(e, "winerror", None) in (87, 1400) \
+                    and self._vanished < 5:      # (winerror: Windows only)
+                # The window went away under us (Edge's short-lived first
+                # window): 87/1400, not a refusal. Look again — this used to
+                # leave the module in its own window for good.
+                self._vanished += 1
+                _CLAIMED_WINDOWS.discard(wid)
+                self._claimed_wid = None
+                self.embed_timer.start()
+                return
             if IS_WINDOWS:
                 # Qt's container would only SetParent again and fail the same.
                 why = (" WSLg windows belong to msrdc.exe, which Windows won't "

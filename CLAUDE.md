@@ -73,7 +73,7 @@ user's to run — hand them the command; never type a password.
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
 - `python test_core.py` (inside `.venv`). Linux: 80 pass (2026-10-04
-  night). Real Windows: 69 pass, 10 skipped (2026-10-04 night).
+  night; +2 since). Real Windows: 72 pass, 10 skipped (2026-10-05).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
@@ -217,6 +217,18 @@ Found, not fixed:
 - ruby-com's System report and python-winapi's System tab print the
   machine's name and user — keep them out of public screenshots.
 
+**Windows site screenshots, 2026-10-05** (`pics for site/*-windows.png`,
+1920×1080 at 100 %, a TV standing in for the Linux resolution). One per
+Linux shot on bomsaisoftware.com/software/unified-base (hero, six-modules,
+five-modules, logs, panes, file-menu, view-menu, tab-menu — same names,
+`-windows` suffix, same compositions with the Windows twins) plus `wsl`:
+Linux python-fractal and node-desktop through WSL beside their Windows
+twins in one window. Taken from a sandboxed launcher whose app folder was
+`D:\ub-shots` (no user path in log lines). Left out on purpose: ruby-com
+and python-winapi (print the machine name and user), java-ffm (lists open
+window titles), node-windows (thumbnails of other windows), c-sysmon (its
+process list shows whatever runs, claude.exe included).
+
 ## Traps (each cost real time)
 
 - WSL appends Windows' PATH: a Linux module found Windows' mvn, bundle,
@@ -236,6 +248,14 @@ Found, not fixed:
   still runs in parallel. A native module's fallback skips Linux windows.
   Verified: 5 WSL demos at once, and the user's own 11-module list at once
   (native + Edge + Electron + WSL), every window in its own tab.
+- Native embedding's "any new window" fallback (after 10 s without a pid
+  match) took a *neighbour's* window when two modules built at once:
+  java-table-win's table came up in csharp-winrt's tab, the C# window in
+  Java's. The fallback now skips windows other running modules' processes
+  own (`_LIVE_TABS`, `_others_windows`). And a window that vanished
+  mid-embed (Edge's short-lived first window: SetParent error 87/1400)
+  sends the search on instead of leaving the module in its own window.
+  "embedded" hides both: check each tab's window *title*.
 - Loading a layout starts every module in one go. Two PHP dev servers both
   got :8000 (`free_port` now skips ports it handed out in the last 30 s;
   `Runtime.serves()` answers without reserving one), and two tabs of one
