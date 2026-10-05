@@ -24,7 +24,8 @@ def _use_app_dir(d):
                        ("PREFS_FILE", "prefs.json"),
                        ("LIBRARY_FILE", "library.json"),
                        ("LAYOUTS_FILE", "layouts.json"),
-                       ("ENVS_DIR", "envs"), ("LOG_DIR", "logs")]:
+                       ("ENVS_DIR", "envs"), ("LOG_DIR", "logs"),
+                       ("BLANK_DIR", "apps")]:
         setattr(main, attr, d / name if name else d)
 
 

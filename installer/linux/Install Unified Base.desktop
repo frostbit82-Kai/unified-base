@@ -1,0 +1,17 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Install Unified Base
+Comment=Install it for this user. No password, nothing outside your home folder.
+# %k is the path of this file, so the launcher works from wherever the archive
+# was unpacked. It is passed as an argument rather than substituted into the
+# command, because a path with a space in it would otherwise arrive as two.
+#
+# The single quotes are deliberate. desktop-file-validate wants double quotes
+# with \" and \\$ inside them -- and GLib, which is what actually launches this
+# in GNOME Files, Nemo and Thunar, refuses to load a file written that way.
+# Measured on the BomsAI Visualizer's identical launcher.
+Exec=sh -c 'cd "$(dirname "$1")" || exit 1; ./install.sh; echo; echo "Press Enter to close this window."; read _' sh %k
+Icon=system-software-install
+Terminal=true
+Categories=System;

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Unified Base
+GenericName=Program Launcher
+Comment=Run programs in any language side by side, embedded as tabs and panes
+Exec="@EXEC@"
+Icon=unified-base
+Terminal=false
+Categories=Development;
+Keywords=launcher;tabs;panes;embed;wine;python;node;rust;java;dotnet;
+StartupNotify=true
+StartupWMClass=Unified Base

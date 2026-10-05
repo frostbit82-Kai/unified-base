@@ -143,11 +143,14 @@ from PyQt6.QtWidgets import (QApplication, QCheckBox, QDialog,
                              QToolButton, QVBoxLayout, QWIDGETSIZE_MAX,
                              QWidget)
 
-BASE_DIR = Path(__file__).resolve().parent   # repo root (holds apps/, demo_module/)
-BLANK_DIR = BASE_DIR / "apps"                 # created empty tabs live here
+BASE_DIR = Path(__file__).resolve().parent   # repo root (holds demo_module/)
 DEMO_DIR = BASE_DIR / "demo_module"           # bundled showcase apps, grouped
                                               # by OS: demo_module/<Linux|Windows>/
 APP_DIR = Path.home() / ".unified_base"
+# Created empty tabs are the user's own projects, so they live with the user's
+# data, not beside the code: an installed copy is replaced wholesale on upgrade.
+# Tabs made before this (stored as <base>/apps/...) still resolve to the repo.
+BLANK_DIR = APP_DIR / "apps"
 ENVS_DIR = APP_DIR / "envs"
 SHARED_ENV_DIR = ENVS_DIR / "_shared"
 CONFIG_FILE = APP_DIR / "modules.json"
@@ -2499,11 +2502,14 @@ def in_sandboxed_env() -> bool:
 
 def embed_diagnostics() -> str:
     """One-line report of which window-lookup backends are available."""
+    # Xlib.display, not Xlib: the package imports fine without its `six`
+    # dependency and only the display module fails — and that is the one the
+    # lookup uses, behind an ImportError that silently returns no windows.
     try:
-        import Xlib  # noqa: F401
+        import Xlib.display  # noqa: F401
         xlib = "python-xlib OK"
-    except ImportError:
-        xlib = "python-xlib MISSING"
+    except ImportError as e:
+        xlib = f"python-xlib MISSING ({e})"
     xdo = "xdotool OK" if shutil.which("xdotool") else "xdotool missing"
     platform_info = "Wayland" if IS_WAYLAND else "X11"
     display = os.environ.get('DISPLAY', '(none)')
@@ -5516,7 +5522,8 @@ class UnifiedBase(QMainWindow):
         self.content = QStackedWidget()
         self.empty_page = QWidget()
         ev = QVBoxLayout(self.empty_page)
-        hint = QLabel("No modules yet — use ＋ Add Module or the File menu.")
+        hint = QLabel("No modules yet — use ＋ Add Module, or File ▸ Load "
+                      "Demo Modules to try some.")
         hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         ev.addWidget(hint)
         self.content.addWidget(self.empty_page)   # index 0
@@ -5905,8 +5912,9 @@ class UnifiedBase(QMainWindow):
         self._refresh_tab_colors()
 
     def new_blank_tab(self):
-        """Create an empty project + tab under apps/, and open its terminal to
-        build in (write scripts, install deps), then Re-detect runtime."""
+        """Create an empty project + tab under ~/.unified_base/apps/, and open
+        its terminal to build in (write scripts, install deps), then Re-detect
+        runtime."""
         base = BLANK_DIR
         try:
             base.mkdir(parents=True, exist_ok=True)
@@ -6985,6 +6993,8 @@ def main():
               "Wayland (embedding disabled).", file=sys.stderr, flush=True)
     app = QApplication(sys.argv)
     app.setApplicationName("Unified Base")
+    app.setDesktopFileName("unified-base")     # matches the installed menu entry
+    app.setWindowIcon(QIcon(str(BASE_DIR / "unified-base.svg")))
     win = UnifiedBase()
     install_crash_guard(APP_DIR / "unified_base.log",
                         lambda m: win.statusBar().showMessage(m, 20000))
