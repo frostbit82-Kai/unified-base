@@ -42,7 +42,7 @@ with PyQt6 in it. Differences that bit: `pyqtSignal` is `Signal`,
 when `self` is deleted (PyQt6's was): pass the object as context,
 `singleShot(ms, self, fn)` — Win32EmbedHost raised "already deleted" in tests.
 
-**Installers: Linux done (`installer/`), Windows next.** Both install per user
+**Installers: Linux and Windows done (`installer/`).** Both install per user
 (`~/.local/share/UnifiedBase`, and on Windows `%LOCALAPPDATA%\Programs`, no
 UAC), so the install folder is writable: the demos still build inside it and
 rebuild after an upgrade. Nothing the user makes may live there — blank tabs
@@ -84,7 +84,8 @@ user's to run — hand them the command; never type a password.
   window, probes WSL / Wine / winget / the browser. Run it first on any new
   machine.
 - `python test_core.py` (inside `.venv`). Linux: 82 pass (2026-10-05, on
-  PySide6). Real Windows: 72 pass, 10 skipped (2026-10-05, on PySide6).
+  PySide6). Real Windows: 75 pass, 10 skipped (2026-10-05, on PySide6; +3:
+  check_console_python, check_x_server_on_demand, check_wsl_setup_button).
   Under Wine `check_proc_table` and `check_sampler` fail only because Wine
   reports no CPU time / parent for other processes. The run uses a
   throwaway app folder (`_use_app_dir`); before 2026-10-04 it left a
@@ -109,13 +110,16 @@ stop (Stop and quit); a removable drive is mounted on demand. Tk apps embed
 natively too.
 
 **Linux windows on Windows embed through VcXsrv, not WSLg.** WSLg's windows
-(msrdc.exe RAIL) refuse SetParent — access denied, UIPI. Setup on this machine:
-VcXsrv (`winget install marha.VcXsrv`), started at login by a Startup shortcut
-(`vcxsrv.exe :0 -multiwindow -clipboard -wgl -listen tcp`, no `-ac`: its
-X0.hosts admits localhost only), and `networkingMode=mirrored` in
-`%USERPROFILE%\.wslconfig` so 127.0.0.1 in WSL is Windows. With both,
-`wsl_display_env()` gives WSL launches `DISPLAY=127.0.0.1:0`; without, WSLg.
-In WSL: `apt install python3-venv python3-tk` (Ubuntu ships neither).
+(msrdc.exe RAIL) refuse SetParent — access denied, UIPI. Needs VcXsrv
+(`winget install marha.VcXsrv`; no `-ac`: its X0.hosts admits localhost only)
+and `networkingMode=mirrored` in `%USERPROFILE%\.wslconfig` so 127.0.0.1 in
+WSL is Windows. With mirrored set, `winplat.wsl_x_display()` uses a running X
+server or starts VcXsrv (`start_x_server`, `:0 -multiwindow -clipboard -wgl
+-listen tcp`, waits for port 6000) and WSL launches get `DISPLAY=127.0.0.1:0`;
+otherwise WSLg. In WSL: `apt install python3-venv python3-tk` (Ubuntu ships
+neither). `setup-wsl.ps1` sets all of it up for users. (This machine also
+has an older Startup-folder shortcut that starts VcXsrv at login; redundant
+now, harmless.)
 
 **Known limits on Windows:**
 - A portable Chromium needs its folder ACL'd for app containers (the log
@@ -386,3 +390,18 @@ process list shows whatever runs, claude.exe included).
   foreground for every new X window. Count frames on real screen pixels
   (BitBlt of the desktop), never PrintWindow — that renders fresh and hid
   the freeze.
+- Windows installer (2026-10-05, `installer/README.md` has the rest): under
+  pythonw (the installed shortcut) a console program the launcher's own
+  Python starts gets a *visible* console — `pythonw -m venv` popped one for
+  ensurepip. Venvs are built with `console_python()` (python.exe beside it);
+  QProcess children are fine (Qt adds CREATE_NO_WINDOW when it has no
+  console). Docker Desktop registers a `docker-desktop` WSL distro, the
+  default when nothing else is installed: `wsl_ready()` reads the *default*
+  distro and refuses that one. Inno's uninstaller first stage
+  (`unins000.exe`) runs from the app folder, so "is it running" checks skip
+  `unins*`. VcXsrv runs `cmd /c xkbcomp` at start and never passes a console
+  on: two ~200 ms terminal windows under Windows Terminal, whatever flags it
+  gets.
+- A header button showing only its glyph (narrow pane) keeps its label in
+  `_labels`; relabel it with `_set_label`, not setText, or the old label
+  comes back when the pane widens.

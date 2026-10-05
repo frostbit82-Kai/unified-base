@@ -18,8 +18,10 @@ import logging
 import os
 import re
 import shutil
+import socket
 import subprocess
 import sys
+import time
 from ctypes import wintypes
 
 import psutil
@@ -287,27 +289,25 @@ LXSS_KEY = r"Software\Microsoft\Windows\CurrentVersion\Lxss"
 
 
 def wsl_ready() -> bool:
-    """WSL is installed *and* has a distro to run Linux modules in.
+    """WSL is installed *and* its default distro can run Linux modules —
+    they run in the default one (`wsl.exe` with no -d).
 
     wsl.exe on PATH proves nothing: Windows 11 ships it in System32 as a stub
     that only prints "not installed" (in UTF-16, on stderr). Every registered
     distro has a key under Lxss with its name, read here without starting the
-    WSL VM."""
+    WSL VM. Docker Desktop registers a `docker-desktop` distro of its own, and
+    with nothing else installed it is the default: no place for modules."""
     import winreg
     if not shutil.which("wsl.exe"):
         return False
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, LXSS_KEY) as k:
-            for i in range(winreg.QueryInfoKey(k)[0]):
-                with winreg.OpenKey(k, winreg.EnumKey(k, i)) as d:
-                    try:
-                        if winreg.QueryValueEx(d, "DistributionName")[0]:
-                            return True
-                    except OSError:
-                        continue
+            default = winreg.QueryValueEx(k, "DefaultDistribution")[0]
+            with winreg.OpenKey(k, default) as d:
+                name = winreg.QueryValueEx(d, "DistributionName")[0]
     except OSError:
-        pass
-    return False
+        return False
+    return bool(name) and not name.lower().startswith("docker-desktop")
 
 
 X_SERVERS = ("vcxsrv.exe", "x410.exe", "xming.exe")
@@ -348,8 +348,9 @@ def wsl_x_display() -> str | None:
 
     WSLg's windows belong to msrdc.exe, which refuses SetParent; an X server
     on Windows draws ordinary Win32 windows that embed. Only when one is
-    running, and WSL's mirrored networking makes 127.0.0.1 this machine
-    (VcXsrv admits localhost only, via X0.hosts — no -ac)."""
+    running — or VcXsrv is installed and starts — and WSL's mirrored
+    networking makes 127.0.0.1 this machine (VcXsrv admits localhost only,
+    via X0.hosts — no -ac)."""
     try:
         with open(os.path.join(os.path.expanduser("~"), ".wslconfig"),
                   encoding="utf-8", errors="replace") as f:
@@ -357,10 +358,43 @@ def wsl_x_display() -> str | None:
                                  f.read())
     except OSError:
         return None
-    if mirrored and any((p.info["name"] or "").lower() in X_SERVERS
-                        for p in psutil.process_iter(["name"])):
+    if mirrored and (any((p.info["name"] or "").lower() in X_SERVERS
+                         for p in psutil.process_iter(["name"]))
+                     or start_x_server()):
         return "127.0.0.1:0"
     return None
+
+
+VCXSRV = os.path.join(os.environ.get("ProgramFiles", r"C:\Program Files"),
+                      "VcXsrv", "vcxsrv.exe")
+# -multiwindow: each X window becomes its own Win32 window, which is what
+# embeds. -listen tcp: WSL reaches it on localhost.
+VCXSRV_ARGS = [":0", "-multiwindow", "-clipboard", "-wgl", "-listen", "tcp"]
+
+
+def start_x_server(timeout: float = 10.0) -> bool:
+    """Start VcXsrv, if installed, and wait until it takes connections — a
+    Linux app that connects sooner fails outright. setup-wsl.ps1 installs it
+    without a login item: it runs only once a Linux module needs it, and
+    keeps running after Unified Base quits, as a login-started one would."""
+    if not os.path.isfile(VCXSRV):
+        return False
+    try:
+        subprocess.Popen([VCXSRV, *VCXSRV_ARGS], close_fds=True,
+                         creationflags=subprocess.DETACHED_PROCESS
+                         | subprocess.CREATE_NEW_PROCESS_GROUP)
+    except OSError as e:
+        logger.warning(f"could not start VcXsrv: {e}")
+        return False
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            socket.create_connection(("127.0.0.1", 6000), 0.5).close()
+            return True
+        except OSError:
+            time.sleep(0.2)
+    logger.warning("VcXsrv started but is not listening on port 6000")
+    return False
 
 
 def embed_diagnostics() -> str:
@@ -553,6 +587,14 @@ def hide_own_console() -> bool:
         return False
     ShowWindow(hwnd, SW_HIDE)
     return True
+
+
+def set_app_id(app_id: str) -> None:
+    """This process's AppUserModelID: taskbar grouping and pinning."""
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(app_id)
+    except OSError as e:
+        logger.debug(f"SetCurrentProcessExplicitAppUserModelID failed: {e}")
 
 
 def find_browser() -> str | None:

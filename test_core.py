@@ -1572,6 +1572,87 @@ def check_which_fresh():
         os.environ["PATH"] = saved
 
 
+def check_console_python():
+    """Venvs are built with python.exe even when the launcher is pythonw (the
+    installed shortcut): pythonw's `-m venv` popped a console for ensurepip."""
+    saved = sys.executable
+    with tempfile.TemporaryDirectory() as d:
+        w = Path(d) / "pythonw.exe"
+        w.touch()
+        try:
+            sys.executable = str(w)
+            assert main.console_python() == str(w), "no python.exe beside it"
+            (Path(d) / "python.exe").touch()
+            assert main.console_python() == str(Path(d) / "python.exe")
+            sys.executable = str(Path(d) / "python3")
+            assert main.console_python() == sys.executable
+        finally:
+            sys.executable = saved
+
+
+def check_wsl_setup_button():
+    """A Linux module on a Windows PC without WSL offers ⤓ Set up WSL, which
+    opens setup-wsl.ps1 in a console of its own (it asks questions)."""
+    _app()
+    keep = (main.bridge_for, main.wsl_ready, main.subprocess.Popen)
+    opened = []
+    with tempfile.TemporaryDirectory() as d:
+        Path(d, "main.py").write_text("print(1)\n")
+        main.bridge_for = lambda plat: "wsl"
+        main.wsl_ready = lambda: False
+        main.subprocess.Popen = lambda args, **kw: opened.append((args, kw))
+        tab = main.ModuleTab(main.ModuleConfig(
+            name="lx", project_dir=d, entry="main.py", runtime="python",
+            platform="linux"))
+        try:
+            tab.start()
+            assert tab.status == "missing bridge", tab.status
+            assert tab._btn_wanted[tab.btn_install], "no button"
+            assert "Set up WSL" in tab._label(tab.btn_install), tab._label(tab.btn_install)
+            if ON_WINDOWS:                   # CREATE_NEW_CONSOLE is Windows-only
+                tab._do_install()
+                args, kw = opened[0]
+                assert args[-1] == str(main.WSL_SETUP), args
+                assert kw["creationflags"] == subprocess.CREATE_NEW_CONSOLE
+        finally:
+            main.bridge_for, main.wsl_ready, main.subprocess.Popen = keep
+            tab.shutdown()
+
+
+def check_x_server_on_demand():
+    """Linux windows: with mirrored networking set, a VcXsrv that is installed
+    but not running is started (once it listens, it is the display); with
+    none installed, Linux modules stay on WSLg."""
+    if not ON_WINDOWS:
+        return
+    import winplat as w
+    saved = (w.psutil.process_iter, w.start_x_server, os.environ.get("USERPROFILE"))
+    started = []
+    with tempfile.TemporaryDirectory() as d:
+        Path(d, ".wslconfig").write_text("[wsl2]\nnetworkingMode=mirrored\n")
+        try:
+            os.environ["USERPROFILE"] = d
+            w.psutil.process_iter = lambda attrs=None: iter(())
+            w.start_x_server = lambda: started.append(1) or True
+            assert w.wsl_x_display() == "127.0.0.1:0" and started == [1]
+            w.start_x_server = lambda: False
+            assert w.wsl_x_display() is None
+            Path(d, ".wslconfig").write_text("[wsl2]\n")
+            started.clear()
+            w.start_x_server = lambda: started.append(1) or True
+            assert w.wsl_x_display() is None and not started, \
+                "started an X server WSL cannot reach"
+        finally:
+            w.psutil.process_iter, w.start_x_server = saved[:2]
+            os.environ["USERPROFILE"] = saved[2]
+    saved_path = w.VCXSRV
+    try:
+        w.VCXSRV = str(Path(tempfile.gettempdir()) / "no-such-vcxsrv.exe")
+        assert w.start_x_server() is False
+    finally:
+        w.VCXSRV = saved_path
+
+
 def check_free_owner():
     """A launcher locked by a dialog that is gone (Edge killed mid-dialog)
     is enabled again; one locked by a dialog still up is left alone."""
@@ -1630,16 +1711,21 @@ def check_kill_pid_exited():
 
 def check_wsl_ready():
     """wsl.exe on PATH isn't WSL: Windows 11 ships it as an installer stub.
-    Ready must agree with whether `wsl --list` names a distro."""
+    Ready must agree with `wsl --list`: a default distro (marked *), and not
+    Docker Desktop's own, which is no place for modules."""
     if not ON_WINDOWS:
         assert main.wsl_ready() is False
         return
     if not shutil.which("wsl.exe"):
         assert not main.wsl_ready()
         return
-    r = subprocess.run(["wsl.exe", "--list", "--quiet"], capture_output=True,
+    r = subprocess.run(["wsl.exe", "--list", "--verbose"], capture_output=True,
                        timeout=60)
-    listed = r.returncode == 0 and bool(r.stdout.replace(b"\0", b"").strip())
+    text = r.stdout.replace(b"\0", b"").decode("ascii", "replace")
+    default = [ln.split()[1] for ln in text.splitlines()
+               if ln.strip().startswith("*")]
+    listed = r.returncode == 0 and bool(default) and \
+        not default[0].lower().startswith("docker-desktop")
     assert main.wsl_ready() == listed, (r.returncode, r.stdout, r.stderr)
 
 
@@ -2356,7 +2442,8 @@ if __name__ == "__main__":
                check_row_drag_slack, check_tab_reveals_pane,
                check_compact_header, check_compact_button_intent,
                check_header_never_clips, check_browser_crop_settles,
-               check_free_owner, check_which_fresh,
+               check_free_owner, check_which_fresh, check_console_python,
+               check_x_server_on_demand, check_wsl_setup_button,
                check_module_log_file, check_env_var_editor,
                check_shortcuts, check_geometry_roundtrip,
                check_proc_table, check_children_walk, check_sampler,

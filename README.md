@@ -55,6 +55,11 @@ psutil (Windows). No admin rights, no prompts — everything is user-level pip.
 carries its own Python and Qt: extract it and double-click *Install Unified
 Base* (installs to `~/.local`, no root). See `installer/README.md`.
 
+**Windows installer** — `py installer\build_windows.py` builds a per-user
+`setup.exe` (no admin) that carries its own Python and Qt, with Start-menu
+entries for the app, its self-test and *Set Up Linux Programs (WSL)*
+(`setup-wsl.ps1`). See `installer/README.md`.
+
 Check what works on a machine: `./run.sh --selftest` or `run.bat --selftest`.
 It launches a small window, finds it, embeds it, stops it, and probes
 Wine / WSL / winget / the browser.
@@ -101,15 +106,16 @@ Point a module at its own prefix by setting
 Windows program starts (the app a `.bat` runs, the game a launcher opens);
 the launcher tags each launch so Stop and the meters still reach them.
 
-**WSL (Windows running Linux apps).** Enable it once (admin PowerShell:
-`wsl --install`). Setup steps, the launch and the command bar all run inside
-the default distro, through a login shell so its PATH is there; Python modules
-get their venv in the distro's own home. Toolchains need to exist *inside* the
-distro. To embed Linux windows, run VcXsrv (`winget install marha.VcXsrv`,
-started as `vcxsrv.exe :0 -multiwindow -clipboard -wgl -listen tcp`) and set
-`networkingMode=mirrored` in `%USERPROFILE%\.wslconfig`. WSLg's own windows
-refuse to be embedded, so without VcXsrv a Linux app opens in its own window
-beside the launcher.
+**WSL (Windows running Linux apps).** Set it up once with `setup-wsl.ps1`
+(Start menu: *Set Up Linux Programs (WSL)*, or a Linux module's **Set up WSL**
+button): it checks virtualization, installs WSL and Ubuntu, Python for Linux
+modules, VcXsrv, and `networkingMode=mirrored` in `%USERPROFILE%\.wslconfig`,
+asking before each change. Setup steps, the launch and the command bar all run
+inside the default distro, through a login shell so its PATH is there; Python
+modules get their venv in the distro's own home. Toolchains need to exist
+*inside* the distro. Linux windows embed through VcXsrv, which the launcher
+starts when a Linux module needs it; WSLg's own windows refuse to be embedded,
+so without VcXsrv a Linux app opens in its own window beside the launcher.
 
 ## Adding a module
 

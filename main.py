@@ -147,6 +147,7 @@ QWIDGETSIZE_MAX = (1 << 24) - 1   # Qt's own value; PySide6 does not export it
 BASE_DIR = Path(__file__).resolve().parent   # repo root (holds demo_module/)
 DEMO_DIR = BASE_DIR / "demo_module"           # bundled showcase apps, grouped
                                               # by OS: demo_module/<Linux|Windows>/
+WSL_SETUP = BASE_DIR / "setup-wsl.ps1"        # Windows: WSL + VcXsrv for Linux modules
 APP_DIR = Path.home() / ".unified_base"
 # Created empty tabs are the user's own projects, so they live with the user's
 # data, not beside the code: an installed copy is replaced wholesale on upgrade.
@@ -1135,6 +1136,18 @@ def toolchain_install_cmd(cmd: str) -> str | None:
     if pm == "winget":
         return f"winget install -e --id {pkgs}"
     return f"{pm} install {pkgs}"   # brew
+
+
+def console_python() -> str:
+    """This interpreter, as python.exe rather than pythonw.exe. The installed
+    shortcut runs pythonw, which has no console to hand down, so a console
+    program it starts opens a window: `pythonw -m venv` popped one for
+    ensurepip. python.exe gets the windowless console Qt gives each child."""
+    exe = Path(sys.executable)
+    con = exe.with_name("python.exe")
+    return str(con) if exe.name.lower() == "pythonw.exe" and con.is_file() \
+        else sys.executable
+
 
 def which_fresh(cmd: str) -> str | None:
     """shutil.which, except that on Windows a miss first re-reads the
@@ -3557,7 +3570,7 @@ class ModuleTab(QWidget):
         self._browser_launched = False
         self._url_tail = ""              # rolling stdout buffer for URL match
         self._pending_install = None     # toolchain install cmd, if offered
-        self._install_purpose = None     # "toolchain" | "xterm" — drives done handler
+        self._install_purpose = None     # "toolchain" | "xterm" | "wsl" — drives done handler
         self._install_proc: QProcess | None = None
         self._term_proc: QProcess | None = None   # mini command-bar process
         self.terminal: "TerminalHost | None" = None  # full xterm, lazy
@@ -3877,6 +3890,16 @@ class ModuleTab(QWidget):
         """A header button's whole label, even while it shows a glyph."""
         return self._labels.get(b, b.text())
 
+    def _set_label(self, b, text: str):
+        """Relabel a header button, also while it shows its glyph: setText
+        then left the old label stored, to come back when the pane widened
+        (⤓ Install wine on a module now asking to set up WSL)."""
+        if b in self._labels:
+            self._labels[b] = text
+            b.setToolTip(text)
+        else:
+            b.setText(text)
+
     def _glyph(self, b) -> str:
         """"▶" for "▶ Start"; "" for a label that has none ("Rebuild Env")."""
         first = self._label(b).split(" ", 1)[0]
@@ -4068,7 +4091,7 @@ class ModuleTab(QWidget):
         if install and can_gui_install():
             self._pending_install = install
             self._install_purpose = "toolchain"
-            self.btn_install.setText(f"⤓ Install {cmd}")
+            self._set_label(self.btn_install, f"⤓ Install {cmd}")
             self._show_btn(self.btn_install, True)
         else:
             self._pending_install = None
@@ -4076,6 +4099,19 @@ class ModuleTab(QWidget):
 
     def _do_install(self):
         if not self._pending_install:
+            return
+        if self._install_purpose == "wsl":
+            # Interactive (it asks before each change, and Ubuntu's first run
+            # asks for a user name), so a console of its own: with none, or
+            # under pythonw, Qt would start it with no window at all.
+            try:
+                subprocess.Popen(["powershell.exe", "-NoProfile", "-ExecutionPolicy",
+                                  "Bypass", "-File", self._pending_install],
+                                 creationflags=subprocess.CREATE_NEW_CONSOLE)
+                self._log("Opened the WSL setup in its own window. When it "
+                          "says it is done, Start this module again.")
+            except OSError as e:
+                self._log(f"Could not open the WSL setup: {e}")
             return
         if self._install_proc is not None and \
                 self._install_proc.state() != QProcess.ProcessState.NotRunning:
@@ -4214,7 +4250,7 @@ class ModuleTab(QWidget):
             if hint and can_gui_install():
                 self._pending_install = hint
                 self._install_purpose = "xterm"
-                self.btn_install.setText("⤓ Install xterm")
+                self._set_label(self.btn_install, "⤓ Install xterm")
                 self._show_btn(self.btn_install, True)
             self.chk_term.setChecked(False)
             return
@@ -4289,9 +4325,11 @@ class ModuleTab(QWidget):
                     (f"\n    Install it with:  {hint}" if hint else ""))
         if b == "wsl" and not wsl_ready():
             return ("This is a Linux module; on Windows it runs inside WSL, "
-                    "which isn't set up (no Linux distro installed). In an "
-                    "administrator PowerShell run:"
-                    "\n    wsl --install\nthen restart and Start again.")
+                    "which isn't set up here (no Linux distro to run it in). "
+                    "Click ⤓ Set up WSL — or run setup-wsl.ps1, also on the "
+                    "Start menu as Set Up Linux Programs (WSL). It checks "
+                    "virtualization, installs WSL and Ubuntu, and sets up "
+                    "embedding. Then Start again.")
         if b == "wine" and self.cfg.runtime == "docker":
             return ("This module builds Windows containers. Those run only on "
                     "Windows, in Docker Desktop's Windows-containers mode — "
@@ -4431,6 +4469,11 @@ class ModuleTab(QWidget):
             self._set_status("missing bridge")
             if self.bridge == "wine":
                 self._offer_install("wine")
+            elif self.bridge == "wsl" and WSL_SETUP.is_file():
+                self._pending_install = str(WSL_SETUP)
+                self._install_purpose = "wsl"
+                self._set_label(self.btn_install, "⤓ Set up WSL")
+                self._show_btn(self.btn_install, True)
             return
         # The native toolchain check is meaningless inside WSL: node or dotnet
         # living in the distro is invisible from the Windows PATH.
@@ -4665,7 +4708,7 @@ class ModuleTab(QWidget):
             # Windows has no `python3` on PATH by default (it is `python` or
             # the `py` launcher), so there the launcher's own interpreter
             # builds the venv — it is the one Python guaranteed to exist.
-            base = sys.executable if IS_WINDOWS else "python3"
+            base = console_python() if IS_WINDOWS else "python3"
             self._log(f"$ {base} -m venv {env_dir}")
             self._run_setup(base, ["-m", "venv", str(env_dir)],
                             on_ok=self._install_deps)
@@ -5090,8 +5133,9 @@ class ModuleTab(QWidget):
                 # Qt's container would only SetParent again and fail the same.
                 why = (" WSLg windows belong to msrdc.exe, which Windows won't "
                        "let another program adopt. To embed Linux windows, "
-                       "run an X server (VcXsrv: -multiwindow -listen tcp) with "
-                       "WSL's networkingMode=mirrored, then Restart."
+                       "run setup-wsl.ps1 (Start menu: Set Up Linux Programs), "
+                       "which sets up VcXsrv and mirrored networking, then "
+                       "Restart."
                        if self.bridge == "wsl" else "")
                 self._log(f"Can't embed this window: "
                           f"{getattr(e, 'strerror', None) or e}{why} It runs "
@@ -5425,7 +5469,11 @@ class UnifiedBase(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Unified Base")
-        self.resize(1100, 750)
+        # First run: 1100x750, but never past a small screen's edge (a
+        # 1280x720 laptop at 150% is 853x480) — its corner buttons hid there.
+        avail = QGuiApplication.primaryScreen().availableGeometry()
+        self.resize(min(1100, avail.width() - 40), min(750, avail.height() - 40))
+        self.move(avail.center() - self.rect().center())
         self.configs = load_configs()
         prefs = load_prefs()
         self._restore_geometry(prefs.get("geometry"))
@@ -6882,10 +6930,10 @@ def selftest() -> int:
             row("toolchains inside WSL", None, " ".join(out.split()) or "none")
             row("Linux windows embed", None,
                 f"yes, X server on {wsl_x_display()}" if wsl_x_display()
-                else "no — WSLg (run VcXsrv + mirrored networking to embed)")
+                else "no — WSLg (setup-wsl.ps1 sets up embedding)")
         else:
             row("WSL (Linux modules)", False,
-                "not set up — admin PowerShell: wsl --install, then restart")
+                "not set up — run setup-wsl.ps1 (Set Up Linux Programs)")
     else:
         w = wine_program()
         if w:
@@ -6983,7 +7031,12 @@ def main():
     if IS_WINDOWS:
         # Launched by run.bat in a console of its own: hide it. Module
         # processes inherit this hidden console instead of each opening one.
+        # (The installed shortcut runs pythonw: no console, and Qt then starts
+        # every module with CREATE_NO_WINDOW instead.)
         winplat.hide_own_console()
+        # The installer's shortcuts carry this ID, so pinning the running
+        # window pins the shortcut, not a bare pythonw.exe that starts nothing.
+        winplat.set_app_id("BomsAI.UnifiedBase")
     # Never start silently: name the Qt platform so a window that fails to
     # appear (e.g. a wedged XWayland after a crash) isn't a blank terminal.
     plat = os.environ.get("QT_QPA_PLATFORM") or "(Qt default)"
